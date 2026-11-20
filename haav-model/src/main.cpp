@@ -1,167 +1,146 @@
 #include <Arduino.h>
 #include <XboxSeriesXControllerESP32_asukiaaa.hpp>
+#include <common/mavlink.h>
 
 XboxSeriesXControllerESP32_asukiaaa::Core xboxController("0c:35:26:fd:09:85");
 
-// Swap these two pins if the wrong motor responds.
-const int LEFT_ESC_PIN = D10;
-const int RIGHT_ESC_PIN = D9;
-const int SERVO_PIN = D8;
-const int PWM_HZ = 50;
-const int PWM_BITS = 14;
+const int RADIO_RX_PIN = D6;
+const int RADIO_TX_PIN = D7;
+const long RADIO_BAUD = 57600;
 
-// Set to true to swap which way the right stick turns the servo.
-const bool INVERT_SERVO = false;
-// Set these if a motor spins the wrong way.
-const bool INVERT_LEFT_MOTOR = false;
-const bool INVERT_RIGHT_MOTOR = false;
-const float STICK_DEADZONE = 0.1f;
-// How far the left trigger must be pulled (0..1) before the stick can drive backward.
-const float REVERSE_TRIGGER_THRESHOLD = 0.5f;
-// How long a motor sits at neutral when switching direction; the ESC won't reverse without it.
-const unsigned long REVERSE_PAUSE_MS = 500;
-// Fraction of the way each output moves toward the stick each loop; lower is smoother but laggier.
-const float SERVO_SMOOTHING = 0.2f;
-const float MOTOR_SMOOTHING = 0.1f;
+const uint8_t MY_SYSID = 255;
+const uint8_t MY_COMPID = MAV_COMP_ID_MISSIONPLANNER;
+const uint8_t TARGET_SYSID = 1;
+const uint8_t TARGET_COMPID = MAV_COMP_ID_AUTOPILOT1;
 
-// Reversible ESCs and the continuous-rotation servo: 1500 us is stopped (and arms the ESCs),
-// 1000/2000 us are full speed each way.
-const int NEUTRAL_US = 1500;
-const int RANGE_US = 500;
+const uint32_t ROVER_MODE_MANUAL = 0;
+const float DEADZONE = 0.1f;
 
-void writePulse(int pin, int us) {
-  ledcWrite(pin, (uint32_t)us * PWM_HZ * ((1 << PWM_BITS) - 1) / 1000000);
+bool vehicleArmed = false;
+unsigned long lastVehicleHeartbeatAt = 0;
+unsigned long rxBytes = 0, rxPackets = 0;
+
+void sendMessage(const mavlink_message_t &msg) {
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+  Serial1.write(buf, mavlink_msg_to_send_buffer(buf, &msg));
 }
 
-// Maps a raw stick axis to -1..1, with small movements near center ignored.
-// Values past the deadzone are rescaled so output starts at 0 instead of jumping.
+void sendHeartbeat() {
+  mavlink_message_t msg;
+  mavlink_msg_heartbeat_pack(MY_SYSID, MY_COMPID, &msg, MAV_TYPE_GCS, MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+  sendMessage(msg);
+}
+
+void sendCommand(uint16_t command, float param1, float param2 = 0) {
+  mavlink_message_t msg;
+  mavlink_msg_command_long_pack(MY_SYSID, MY_COMPID, &msg, TARGET_SYSID, TARGET_COMPID,
+                                command, 0, param1, param2, 0, 0, 0, 0, 0);
+  sendMessage(msg);
+}
+
+// RC1 = steering, RC3 = throttle, RC6 = servo. UINT16_MAX leaves a channel alone.
+void sendRcOverride(uint16_t steering, uint16_t throttle, uint16_t servo) {
+  const uint16_t SKIP = UINT16_MAX;
+  mavlink_message_t msg;
+  mavlink_msg_rc_channels_override_pack(MY_SYSID, MY_COMPID, &msg, TARGET_SYSID, TARGET_COMPID,
+                                        steering, SKIP, throttle, SKIP, SKIP, servo, SKIP, SKIP,
+                                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  sendMessage(msg);
+}
+
+void readRadio() {
+  mavlink_message_t msg;
+  mavlink_status_t status;
+  while (Serial1.available()) {
+    rxBytes++;
+    if (!mavlink_parse_char(MAVLINK_COMM_0, Serial1.read(), &msg, &status)) {
+      continue;
+    }
+    rxPackets++;
+    if (msg.sysid != TARGET_SYSID) {
+      continue;
+    }
+    if (msg.msgid == MAVLINK_MSG_ID_HEARTBEAT && msg.compid == TARGET_COMPID) {
+      lastVehicleHeartbeatAt = millis();
+      vehicleArmed = mavlink_msg_heartbeat_get_base_mode(&msg) & MAV_MODE_FLAG_SAFETY_ARMED;
+    } else if (msg.msgid == MAVLINK_MSG_ID_STATUSTEXT) {
+      char text[MAVLINK_MSG_STATUSTEXT_FIELD_TEXT_LEN + 1] = {};
+      mavlink_msg_statustext_get_text(&msg, text);
+      Serial.printf("PIXHAWK: %s\n", text);
+    } else if (msg.msgid == MAVLINK_MSG_ID_COMMAND_ACK) {
+      Serial.printf("ACK: command %u result %u\n", mavlink_msg_command_ack_get_command(&msg),
+                    mavlink_msg_command_ack_get_result(&msg));
+    }
+  }
+}
+
 float readStick(uint16_t raw) {
   const float center = XboxControllerNotificationParser::maxJoy / 2.0f;
   float value = (raw - center) / center;
-  if (fabs(value) < STICK_DEADZONE) {
-    return 0;
-  }
-  float magnitude = (fabs(value) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
-  return value > 0 ? magnitude : -magnitude;
+  return fabs(value) < DEADZONE ? 0 : value;
 }
 
-// Eases toward the target a little each loop to hide uneven controller updates and jitter.
-float smooth(float target, float &current, float factor) {
-  current += (target - current) * factor;
-  return current;
-}
-
-// Turns stick x/y (-1..1) into left/right motor throttles (-1..1).
-// Forward: the motor on the outside of the turn gets extra throttle, so full right runs
-// only the left motor. Reverse steers like a boat backing up: back-right swings the stern
-// right by easing off the right motor, and neither motor runs forward while backing.
-void mixDrive(float x, float y, float &left, float &right) {
-  if (y >= 0) {
-    left = y + max(x, 0.0f);
-    right = y + max(-x, 0.0f);
-    // Scale both down together so a diagonal keeps its turn instead of clipping at full.
-    float biggest = max(left, right);
-    if (biggest > 1) {
-      left /= biggest;
-      right /= biggest;
-    }
-  } else {
-    left = y * (1 - max(-x, 0.0f));
-    right = y * (1 - max(x, 0.0f));
-  }
-}
-
-struct Motor {
-  float command = 0;  // smoothed throttle (-1..1) actually sent to the ESC
-  unsigned long pauseStartedAt = 0;
-};
-
-// Smooths a motor toward its target throttle. When the target flips direction, the motor
-// drops to neutral and waits REVERSE_PAUSE_MS so the ESC will accept the new direction.
-float updateMotor(float target, Motor &motor) {
-  bool flipping = (target > 0 && motor.command < 0) || (target < 0 && motor.command > 0);
-  if (flipping) {
-    motor.command = 0;
-    motor.pauseStartedAt = millis();
-  }
-  if (millis() - motor.pauseStartedAt < REVERSE_PAUSE_MS) {
-    return 0;
-  }
-  smooth(target, motor.command, MOTOR_SMOOTHING);
-  // Snap to zero once it has eased in, so a stop at center already counts as the pause.
-  if (fabs(motor.command) < 0.01f) {
-    motor.command = 0;
-  }
-  return motor.command;
+uint16_t toPwm(float value) {
+  return 1500 + constrain(value, -1.0f, 1.0f) * 500;
 }
 
 void setup() {
   Serial.begin(115200);
-  ledcAttach(LEFT_ESC_PIN, PWM_HZ, PWM_BITS);
-  ledcAttach(RIGHT_ESC_PIN, PWM_HZ, PWM_BITS);
-  ledcAttach(SERVO_PIN, PWM_HZ, PWM_BITS);
-  // Hold everything at neutral from power-up; the ESCs arm on this signal.
-  writePulse(LEFT_ESC_PIN, NEUTRAL_US);
-  writePulse(RIGHT_ESC_PIN, NEUTRAL_US);
-  writePulse(SERVO_PIN, NEUTRAL_US);
+  Serial1.begin(RADIO_BAUD, SERIAL_8N1, RADIO_RX_PIN, RADIO_TX_PIN);
   xboxController.begin();
 }
 
 void loop() {
   xboxController.onLoop();
-
-  // The library can get stuck after repeated failed connects; a reboot recovers it.
   if (xboxController.getCountFailedConnection() > 2) {
     ESP.restart();
   }
+  readRadio();
 
   bool connected = xboxController.isConnected() && !xboxController.isWaitingForFirstNotification();
   auto &n = xboxController.xboxNotif;
+  unsigned long now = millis();
 
-  // Left stick drives both motors; they ease to a stop if the controller drops.
-  // Raw Y reads lower when pushed up, so it's negated to make forward positive.
-  float driveX = connected ? readStick(n.joyLHori) : 0;
-  float driveY = connected ? -readStick(n.joyLVert) : 0;
-  // Pulling the stick back does nothing unless the left trigger is held.
-  bool reverseAllowed = n.trigLT >= REVERSE_TRIGGER_THRESHOLD * XboxControllerNotificationParser::maxTrig;
-  if (driveY < 0 && !reverseAllowed) {
-    driveX = 0;
-    driveY = 0;
+  static bool lastA = false, lastB = false;
+  bool a = connected && n.btnA;
+  bool b = connected && n.btnB;
+  if (a && !lastA) {
+    Serial.println("A pressed: sending MANUAL + arm");
+    sendCommand(MAV_CMD_DO_SET_MODE, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, ROVER_MODE_MANUAL);
+    sendCommand(MAV_CMD_COMPONENT_ARM_DISARM, 1);
   }
-  float leftCommand, rightCommand;
-  mixDrive(driveX, driveY, leftCommand, rightCommand);
-  if (INVERT_LEFT_MOTOR) {
-    leftCommand = -leftCommand;
+  if (b && !lastB) {
+    Serial.println("B pressed: sending disarm");
+    sendCommand(MAV_CMD_COMPONENT_ARM_DISARM, 0);
   }
-  if (INVERT_RIGHT_MOTOR) {
-    rightCommand = -rightCommand;
-  }
-  static Motor leftMotor, rightMotor;
-  int leftPulseUs = NEUTRAL_US + updateMotor(leftCommand, leftMotor) * RANGE_US;
-  int rightPulseUs = NEUTRAL_US + updateMotor(rightCommand, rightMotor) * RANGE_US;
-  writePulse(LEFT_ESC_PIN, leftPulseUs);
-  writePulse(RIGHT_ESC_PIN, rightPulseUs);
+  lastA = a;
+  lastB = b;
 
-  // Right stick side-to-side sets servo speed and direction; it stops if the controller drops.
-  float servoCommand = connected ? readStick(n.joyRHori) : 0;
-  if (INVERT_SERVO) {
-    servoCommand = -servoCommand;
+  uint16_t steering = 1500, throttle = 1500, servo = 1500;
+  if (connected) {
+    steering = toPwm(readStick(n.joyLHori));
+    throttle = toPwm((float(n.trigRT) - n.trigLT) / XboxControllerNotificationParser::maxTrig);
+    servo = toPwm(readStick(n.joyRHori));
   }
-  static float smoothedServoCommand = 0;
-  servoCommand = smooth(servoCommand, smoothedServoCommand, SERVO_SMOOTHING);
-  int servoPulseUs = NEUTRAL_US + servoCommand * RANGE_US;
-  writePulse(SERVO_PIN, servoPulseUs);
 
-  static unsigned long lastLogAt = 0;
-  if (millis() - lastLogAt >= 200) {
-    lastLogAt = millis();
-    const char *servoState = servoPulseUs > NEUTRAL_US   ? "RIGHT"
-                             : servoPulseUs < NEUTRAL_US ? "LEFT"
-                                                         : "STOP";
-    Serial.printf("%s | LX %5u LY %5u LT %4u | L %4d us R %4d us | RX %5u | servo %-5s %+.2f %4d us\n",
-                  connected ? "CONNECTED" : "NO CTRL  ",
-                  n.joyLHori, n.joyLVert, n.trigLT, leftPulseUs, rightPulseUs,
-                  n.joyRHori, servoState, servoCommand, servoPulseUs);
+  static unsigned long lastHeartbeatAt = 0, lastOverrideAt = 0, lastLogAt = 0;
+  if (now - lastHeartbeatAt >= 1000) {
+    lastHeartbeatAt = now;
+    sendHeartbeat();
+    if (!connected) {
+      sendCommand(MAV_CMD_COMPONENT_ARM_DISARM, 0);
+    }
+  }
+  if (now - lastOverrideAt >= 50) {
+    lastOverrideAt = now;
+    sendRcOverride(steering, throttle, servo);
+  }
+  if (now - lastLogAt >= 200) {
+    lastLogAt = now;
+    bool linked = lastVehicleHeartbeatAt && now - lastVehicleHeartbeatAt < 3000;
+    Serial.printf("ctrl %-3s | link %-3s | rx %lu B %lu pkt | %-8s | steer %4u thr %4u servo %4u\n",
+                  connected ? "ok" : "--", linked ? "ok" : "--", rxBytes, rxPackets,
+                  vehicleArmed ? "ARMED" : "disarmed", steering, throttle, servo);
   }
 
   delay(10);
