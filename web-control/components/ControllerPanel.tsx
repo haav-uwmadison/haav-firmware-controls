@@ -16,7 +16,7 @@ export function ControllerPanel({ controller, command, lost }: Props) {
   const badge = controller.connected
     ? { tone: "ok" as const, text: "● Xbox · connected" }
     : lost ? { tone: "danger" as const, text: "● Controller lost" } : { tone: "idle" as const, text: "Not detected" };
-  return <aside className="flex min-h-0 flex-col border-border bg-panel lg:border-r">
+  return <aside className="flex h-full flex-col border-border bg-panel lg:border-r">
     <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2">
       <h2 className="m-0 text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">Controller</h2>
       <Badge className={cn("text-[11px] font-bold tracking-[0.04em]", toneBadge[badge.tone])} title={controller.id || undefined}>{badge.text}</Badge>

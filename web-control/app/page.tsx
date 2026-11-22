@@ -3,7 +3,7 @@
 // View only. All boat logic lives in lib/mission-controller.ts; this file maps its state to panels
 // and forwards clicks and keys back to it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsolePanel } from "@/components/ConsolePanel";
@@ -40,6 +40,17 @@ export default function Home() {
   const { mission, state, backend, daemonVersion } = useMission();
   const { connected, connecting, telemetry, controller, sending, armPending, linkPhase, startBlockedReason } = state;
   const [followBoat, setFollowBoat] = useState(true);
+
+  // The status bar stays pinned while the page scrolls; the controller column sticks just below it.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barHeight, setBarHeight] = useState(88);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setBarHeight(el.offsetHeight));
+    observer.observe(el); setBarHeight(el.offsetHeight);
+    return () => observer.disconnect();
+  }, []);
 
   // Keep keystroke handling in the controller; ignore shortcuts while typing in a control.
   useEffect(() => {
@@ -105,17 +116,19 @@ export default function Home() {
 
   return <TooltipProvider>
     <div className="p-6 text-sm text-muted-foreground md:hidden">Mission needs a desktop Chrome window at least 768px wide.</div>
-    <div className="hidden min-h-0 flex-col md:flex lg:h-screen lg:overflow-hidden">
-      <StatusBar primary={primary} secondary={secondary} actions={actions} />
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_1fr] xl:grid-cols-[360px_1fr]">
-        <div className="order-2 min-h-0 lg:order-1"><ControllerPanel controller={controller} command={controllerToCommand(controller)} lost={state.controllerLost} /></div>
-        <main className="order-1 mx-0 flex w-full max-w-none min-h-0 flex-col gap-4 p-4 lg:order-2">
+    <div className="hidden min-h-screen flex-col md:flex" style={{ "--bar-h": `${barHeight}px` } as CSSProperties}>
+      <div ref={barRef} className="sticky top-0 z-[1100]"><StatusBar primary={primary} secondary={secondary} actions={actions} /></div>
+      <div className="grid flex-1 grid-cols-1 lg:grid-cols-[300px_1fr] xl:grid-cols-[360px_1fr]">
+        <div className="order-2 bg-panel lg:order-1">
+          <div className="lg:sticky lg:top-[var(--bar-h)] lg:h-[calc(100vh-var(--bar-h))]"><ControllerPanel controller={controller} command={controllerToCommand(controller)} lost={state.controllerLost} /></div>
+        </div>
+        <main className="order-1 mx-0 flex w-full max-w-none flex-col gap-4 p-4 lg:order-2">
           <ConsolePanel phase={state.outputPhase} pwm={state.pwm} overridesSent={state.overridesSent} heartbeatsSent={state.heartbeatsSent} banner={state.banner}
             motorSpan={state.motorSpan} onMotorSpanChange={span => mission.setMotorSpan(span)} format={format} />
-          <div className="grid min-h-[260px] flex-1 grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-            <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="min-h-[300px]" />
-            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="min-h-[260px]" />
-            <LogPanel lines={state.logs} className="min-h-[220px] xl:col-span-2 2xl:col-span-1" />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="h-[440px]" />
+            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />
+            <LogPanel lines={state.logs} className="h-[440px] xl:col-span-2 2xl:col-span-1" />
           </div>
         </main>
       </div>
