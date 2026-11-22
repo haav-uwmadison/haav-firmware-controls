@@ -147,6 +147,8 @@ class Mission {
   mavlink_message_t rxMsg_{};
   mavlink_status_t rxStatus_{};
   uint32_t heartbeatAt_ = 0, lostSince_ = 0, connectedAt_ = 0;
+  bool streamsRequested_ = false;
+  void requestStreams();
   std::string lastMessage_ = "—";
   std::string seenErrors_;
   int gpsFix_ = 0, gpsSats_ = 0;

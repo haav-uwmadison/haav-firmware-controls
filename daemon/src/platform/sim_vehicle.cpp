@@ -49,6 +49,8 @@ void SimVehicle::onBytes(const uint8_t* data, size_t len) {
         armed_ = arm;
       } else if (c.command == MAV_CMD_DO_SET_MODE) {
         mode_ = static_cast<uint32_t>(c.param2);
+      } else if (c.command == MAV_CMD_SET_MESSAGE_INTERVAL) {
+        // accepted; the simulator already streams at the rates the dashboard asks for
       } else result = MAV_RESULT_UNSUPPORTED;
       mavlink_message_t ack;
       mavlink_msg_command_ack_pack(SYS, COMP, &ack, c.command, result, 0, 0, 0, 0);
