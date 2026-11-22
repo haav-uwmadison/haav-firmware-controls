@@ -20,6 +20,29 @@ void statusText(std::vector<uint8_t>& out, uint8_t severity, const char* text) {
 }
 }  // namespace
 
+struct SimParam { const char* name; float value; uint8_t type; };
+// From haav-model/pixhawk/haav-esp32.params (Rover-Boat 4.7.2), the entries that matter for this boat.
+static const SimParam kParams[] = {
+  {"AHRS_EKF_TYPE", 3, 2}, {"ARMING_CHECK", 1, 6}, {"BATT_MONITOR", 4, 2}, {"BATT_CAPACITY", 5000, 6}, {"CRUISE_SPEED", 2, 9}, {"CRUISE_THROTTLE", 50, 2},
+  {"FRAME_CLASS", 2, 2}, {"FS_ACTION", 2, 2}, {"FS_TIMEOUT", 1.5f, 9}, {"FS_THR_ENABLE", 1, 2}, {"GPS1_TYPE", 1, 2}, {"MAV_GCS_SYSID", 255, 4},
+  {"MOT_PWM_TYPE", 0, 2}, {"MOT_THR_MAX", 100, 2}, {"MOT_THR_MIN", 0, 2}, {"MOT_SLEWRATE", 100, 2}, {"PILOT_STEER_TYPE", 1, 2}, {"RC_OVERRIDE_TIME", 1, 9},
+  {"RC1_MAX", 2000, 4}, {"RC1_MIN", 1000, 4}, {"RC1_TRIM", 1500, 4}, {"RC3_MAX", 2000, 4}, {"RC3_MIN", 1000, 4}, {"RC3_TRIM", 1500, 4},
+  {"RC6_MAX", 2000, 4}, {"RC6_MIN", 1000, 4}, {"RC6_TRIM", 1500, 4}, {"SERIAL1_BAUD", 57, 6}, {"SERIAL1_PROTOCOL", 2, 2},
+  {"SERVO1_FUNCTION", 73, 4}, {"SERVO1_MAX", 2000, 4}, {"SERVO1_MIN", 1000, 4}, {"SERVO1_REVERSED", 0, 2}, {"SERVO1_TRIM", 1500, 4},
+  {"SERVO2_FUNCTION", 74, 4}, {"SERVO2_MAX", 2000, 4}, {"SERVO2_MIN", 1000, 4}, {"SERVO2_REVERSED", 0, 2}, {"SERVO2_TRIM", 1500, 4},
+  {"SERVO3_FUNCTION", 56, 4}, {"SERVO3_MAX", 2000, 4}, {"SERVO3_MIN", 1000, 4}, {"SERVO3_REVERSED", 0, 2}, {"SERVO3_TRIM", 1500, 4},
+  {"SYSID_THISMAV", 1, 4}, {"WP_SPEED", 1.5f, 9},
+};
+constexpr int kParamCount = static_cast<int>(sizeof kParams / sizeof kParams[0]);
+
+void SimVehicle::emitParam(int index, std::vector<uint8_t>& out) {
+  if (index < 0 || index >= kParamCount) return;
+  const SimParam& p = kParams[index];
+  mavlink_message_t m;
+  mavlink_msg_param_value_pack(SYS, COMP, &m, p.name, p.value, p.type, static_cast<uint16_t>(kParamCount), static_cast<uint16_t>(index));
+  emit(m, out);
+}
+
 SimVehicle::SimVehicle(std::function<uint32_t()> nowMs) : nowMs_(std::move(nowMs)) {
   statusText(pending_, 6, "ArduPilot Ready (simulated)");
 }
@@ -39,6 +62,12 @@ void SimVehicle::onBytes(const uint8_t* data, size_t len) {
       if (o.chan3_raw != 0xFFFF) right_ = o.chan3_raw;
       if (o.chan6_raw != 0xFFFF) rudder_ = o.chan6_raw;
       lastOverride_ = nowMs_();
+    } else if (rx_.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST) {
+      paramStreamNext_ = 0;
+    } else if (rx_.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+      mavlink_param_request_read_t r; mavlink_msg_param_request_read_decode(&rx_, &r);
+      if (r.param_index >= 0) emitParam(r.param_index, pending_);
+      else for (int i = 0; i < kParamCount; i++) if (std::strncmp(kParams[i].name, r.param_id, 16) == 0) emitParam(i, pending_);
     } else if (rx_.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
       mavlink_command_long_t c; mavlink_msg_command_long_decode(&rx_, &c);
       uint8_t result = MAV_RESULT_ACCEPTED;
@@ -85,6 +114,12 @@ std::vector<uint8_t> SimVehicle::poll() {
   lon_ += speedMps_ * std::sin(rad) * dt / (111320.0 * std::cos(lat_ * PI / 180.0));
   if (armed_) voltage_ = std::max(10.5f, voltage_ - static_cast<float>(dt) * 0.002f);
 
+  // Stream the parameter list a few entries per poll, dropping one the first time round.
+  for (int n = 0; n < 3 && paramStreamNext_ >= 0; n++) {
+    const int i = paramStreamNext_++;
+    if (i == 7 && !droppedOnce_) droppedOnce_ = true; else emitParam(i, out);
+    if (paramStreamNext_ >= kParamCount) paramStreamNext_ = -1;
+  }
   if (now >= nextHeartbeat_) {
     nextHeartbeat_ = now + 1000;
     mavlink_message_t m;

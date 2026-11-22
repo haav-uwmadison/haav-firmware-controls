@@ -14,6 +14,8 @@ export interface MissionApi {
   setBaud(baud: string): void;
   setMotorSpan(span: number): void;
   clearTrail(): void;
+  /** Re-read the Pixhawk's parameter table. */
+  refreshParams(): Promise<void> | void;
   connect(): Promise<void> | void;
   disconnect(): Promise<void> | void;
   startOutput(): void;

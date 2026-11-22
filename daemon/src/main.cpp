@@ -60,6 +60,14 @@ json toJson(const Controller& c) {
   return {{"connected", c.connected}, {"id", ""}, {"lx", c.lx}, {"ly", c.ly}, {"rx", c.rx}, {"ry", c.ry}, {"lt", c.lt}, {"rt", c.rt}, {"a", c.a}, {"b", c.b}, {"time", monotonicMs()}};
 }
 
+json toJson(const Param& p) { return {{"name", p.name}, {"value", p.value}, {"type", p.type}, {"index", p.index}}; }
+
+json paramsJson(const ParamTable& t) {
+  json byName = json::object();
+  for (const auto& kv : t.byName) byName[kv.first] = toJson(kv.second);
+  return {{"byName", byName}, {"count", t.count}, {"received", t.byName.size()}, {"loading", t.loading}, {"updatedAt", 0}};
+}
+
 json toJson(const LogLine& l) { return {{"id", l.id}, {"time", l.time}, {"kind", name(l.kind)}, {"text", l.text}}; }
 
 json positionJson(const MissionState& s) {
@@ -161,11 +169,17 @@ int main(int argc, char** argv) {
     hello["type"] = "hello"; hello["version"] = VERSION;
     hello["logs"] = json::array(); for (const auto& l : mission.logs()) hello["logs"].push_back(toJson(l));
     hello["trail"] = json::array(); for (const auto& t : mission.state().trail) hello["trail"].push_back({t.lat, t.lon});
+    hello["params"] = paramsJson(mission.params());
     return hello.dump();
   });
   mission.onLog = [&](const LogLine& l) { std::printf("[%s] %s\n", name(l.kind), l.text.c_str()); std::fflush(stdout); ws.broadcast(json{{"type", "log"}, {"line", toJson(l)}}.dump()); };
   mission.onTrailPoint = [&](const TrailPoint& t) { ws.broadcast(json{{"type", "trail"}, {"point", {t.lat, t.lon}}}.dump()); };
   mission.onTrailCleared = [&] { ws.broadcast(json{{"type", "trailClear"}}.dump()); };
+  mission.onParams = [&](const std::vector<Param>& batch, int count, bool loading) {
+    json items = json::array(); for (const Param& p : batch) items.push_back(toJson(p));
+    ws.broadcast(json{{"type", "params"}, {"items", items}, {"count", count}, {"loading", loading}}.dump());
+  };
+  mission.onParamsCleared = [&](bool loading) { ws.broadcast(json{{"type", "paramsClear"}, {"loading", loading}}.dump()); };
 
   std::string error;
   if (!ws.start(error)) { std::fprintf(stderr, "cannot listen on 127.0.0.1:%d: %s\n", opt.wsPort, error.c_str()); return 1; }
@@ -220,6 +234,7 @@ int main(int argc, char** argv) {
       else if (name == "setMotorSpan") mission.setMotorSpan(cmd.value("span", DEFAULT_MOTOR_SPAN));
       else if (name == "setBaud") mission.setBaud(std::atoi(cmd.value("baud", "57600").c_str()));
       else if (name == "clearTrail") mission.clearTrail();
+      else if (name == "refreshParams") mission.refreshParams();
     }
     // 4. timers and the control loop
     mission.tick();

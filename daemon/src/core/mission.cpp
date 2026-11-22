@@ -15,6 +15,9 @@ constexpr uint32_t LAST_MESSAGE_REFRESH_MS = 3000;  // "Last msg" would flicker 
 constexpr uint32_t STOPPED_BADGE_MS = 3000;
 constexpr uint32_t WATCHDOG_MS = 500;
 constexpr size_t LOG_LIMIT = 200;
+constexpr uint32_t PARAM_FLUSH_MS = 100;    // batch PARAM_VALUEs into one dashboard message
+constexpr uint32_t PARAM_GAP_MS = 1500;     // silence before asking for missing parameters
+constexpr int PARAM_RETRY_BATCH = 40, PARAM_RETRY_LIMIT = 6;
 constexpr size_t TRAIL_LIMIT = 1200;                // about 40 minutes at one point per 2 s
 constexpr uint8_t ROVER_MODE_MANUAL = 0;
 
@@ -172,6 +175,49 @@ void Mission::panic() {
 
 void Mission::setMotorSpan(int span) { s_.motorSpan = std::min(MAX_MOTOR_SPAN, std::max(MIN_MOTOR_SPAN, span)); }
 void Mission::setBaud(int baud) { if (!s_.connected && !s_.connecting) s_.baud = baud; }
+void Mission::refreshParams() {
+  if (!s_.connected) return;
+  params_ = ParamTable{}; params_.loading = true; paramBatch_.clear(); paramRetries_ = 0; lastParamAt_ = io_.nowMs(); nextParamFlushAt_ = 0;
+  if (onParamsCleared) onParamsCleared(true);
+  mavlink_message_t msg;
+  mavlink_msg_param_request_list_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT);
+  if (!send(msg)) { log("Parameter request failed: write error", LogKind::Error); return; }
+  log("Requested the parameter list");
+}
+
+void Mission::flushParams(uint32_t now) {
+  nextParamFlushAt_ = 0;
+  const int received = static_cast<int>(params_.byName.size());
+  const bool done = received >= params_.count;
+  if (done && params_.loading) log(std::to_string(params_.count) + " parameters loaded");
+  params_.loading = !done;
+  if (onParams) onParams(paramBatch_, params_.count, params_.loading);
+  paramBatch_.clear();
+  (void)now;
+}
+
+// The list stream drops frames on a radio link; ask for the gaps one index at a time.
+void Mission::paramWatchdog(uint32_t now) {
+  if (!params_.loading || params_.count == 0 || now - lastParamAt_ < PARAM_GAP_MS) return;
+  if (paramRetries_ >= PARAM_RETRY_LIMIT) {
+    log(std::to_string(params_.count - static_cast<int>(params_.byName.size())) + " parameters never arrived; press Refresh to try again", LogKind::Warn);
+    params_.loading = false;
+    if (onParams) onParams({}, params_.count, false);
+    return;
+  }
+  std::vector<bool> have(static_cast<size_t>(params_.count), false);
+  for (const auto& kv : params_.byName) if (kv.second.index >= 0 && kv.second.index < params_.count) have[static_cast<size_t>(kv.second.index)] = true;
+  paramRetries_++; lastParamAt_ = now;
+  int asked = 0;
+  for (int i = 0; i < params_.count && asked < PARAM_RETRY_BATCH; i++) {
+    if (have[static_cast<size_t>(i)]) continue;
+    mavlink_message_t msg;
+    mavlink_msg_param_request_read_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT, "", static_cast<int16_t>(i));
+    if (!send(msg)) return;
+    asked++;
+  }
+}
+
 void Mission::clearTrail() { s_.trail.clear(); haveTrail_ = false; if (onTrailCleared) onTrailCleared(); }
 
 // ---- timers and loop ----------------------------------------------------------------------------
@@ -185,6 +231,8 @@ void Mission::tick() {
     if (s_.connected && !s_.sending && s_.telemetry.armed == 0 && heartbeatAt_ && now - heartbeatAt_ <= HEARTBEAT_TIMEOUT_MS) sendRudderNeutral();
   }
   if (static_cast<int32_t>(now - nextWatchdogAt_) >= 0) { nextWatchdogAt_ = now + WATCHDOG_MS; watchdog(now); }
+  if (nextParamFlushAt_ && static_cast<int32_t>(now - nextParamFlushAt_) >= 0) flushParams(now);
+  if (s_.connected) paramWatchdog(now);
   if (static_cast<int32_t>(now - nextLastMessageAt_) >= 0) { nextLastMessageAt_ = now + LAST_MESSAGE_REFRESH_MS; s_.telemetry.last = lastMessage_; }
   if (stoppedUntil_ && static_cast<int32_t>(now - stoppedUntil_) >= 0) { stoppedUntil_ = 0; if (s_.outputPhase == OutputPhase::Stopped) s_.outputPhase = OutputPhase::Idle; }
   if (ackDeadline_ && static_cast<int32_t>(now - ackDeadline_) >= 0) {
@@ -241,7 +289,7 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
   switch (msg.msgid) {
     case MAVLINK_MSG_ID_HEARTBEAT: msgName = "HEARTBEAT"; break; case MAVLINK_MSG_ID_SYS_STATUS: msgName = "SYS_STATUS"; break;
     case MAVLINK_MSG_ID_GPS_RAW_INT: msgName = "GPS_RAW_INT"; break; case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: msgName = "GLOBAL_POSITION_INT"; break;
-    case MAVLINK_MSG_ID_ATTITUDE: msgName = "ATTITUDE"; break; case MAVLINK_MSG_ID_VFR_HUD: msgName = "VFR_HUD"; break; case MAVLINK_MSG_ID_COMMAND_ACK: msgName = "COMMAND_ACK"; break;
+    case MAVLINK_MSG_ID_PARAM_VALUE: msgName = "PARAM_VALUE"; break; case MAVLINK_MSG_ID_ATTITUDE: msgName = "ATTITUDE"; break; case MAVLINK_MSG_ID_VFR_HUD: msgName = "VFR_HUD"; break; case MAVLINK_MSG_ID_COMMAND_ACK: msgName = "COMMAND_ACK"; break;
     case MAVLINK_MSG_ID_STATUSTEXT: msgName = "STATUSTEXT"; break; default: break;
   }
   lastMessage_ = (msgName ? std::string(msgName) : "MSG " + std::to_string(msg.msgid)) + " · " + std::to_string(msg.sysid) + "/" + std::to_string(msg.compid);
@@ -254,7 +302,7 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
       mavlink_heartbeat_t hb; mavlink_msg_heartbeat_decode(&msg, &hb);
       if (lostSince_) { log("Heartbeat back after " + std::to_string((now - lostSince_ + 500) / 1000) + " s"); lostSince_ = 0; }
       heartbeatAt_ = now;
-      if (!streamsRequested_) { streamsRequested_ = true; requestStreams(); }
+      if (!streamsRequested_) { streamsRequested_ = true; requestStreams(); refreshParams(); }
       const char* v = vehicleName(hb.type); const char* m = modeName(hb.custom_mode);
       s_.telemetry.vehicle = v ? v : "MAV_TYPE " + std::to_string(hb.type);
       s_.telemetry.mode = m ? m : "Custom " + std::to_string(hb.custom_mode);
@@ -294,6 +342,15 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
         if (s_.trail.size() > TRAIL_LIMIT) s_.trail.erase(s_.trail.begin(), s_.trail.begin() + (s_.trail.size() - TRAIL_LIMIT));
         if (onTrailPoint) onTrailPoint(lastTrail_);
       }
+      break;
+    }
+    case MAVLINK_MSG_ID_PARAM_VALUE: {
+      mavlink_param_value_t pv; mavlink_msg_param_value_decode(&msg, &pv);
+      char id[17]; std::memcpy(id, pv.param_id, 16); id[16] = 0;
+      Param p{id, pv.param_value, pv.param_type, pv.param_index};
+      params_.byName[p.name] = p; params_.count = std::max<int>(pv.param_count, static_cast<int>(params_.byName.size()));
+      paramBatch_.push_back(p); lastParamAt_ = now;
+      if (!nextParamFlushAt_) nextParamFlushAt_ = now + PARAM_FLUSH_MS;
       break;
     }
     case MAVLINK_MSG_ID_ATTITUDE: {
@@ -394,7 +451,8 @@ void Mission::waitForAck(ArmPending what) { s_.armPending = what; ackDeadline_ =
 void Mission::clearAckWait() { ackDeadline_ = 0; s_.armPending = ArmPending::None; }
 
 void Mission::resetLinkState() {
-  heartbeatAt_ = 0; lostSince_ = 0; streamsRequested_ = false; lastMessage_ = "—"; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
+  heartbeatAt_ = 0; lostSince_ = 0; streamsRequested_ = false; lastMessage_ = "—";
+  params_ = ParamTable{}; paramBatch_.clear(); nextParamFlushAt_ = 0; paramRetries_ = 0; if (onParamsCleared) onParamsCleared(false); seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
   rxStatus_ = mavlink_status_t{};
   s_.telemetry = Telemetry{}; s_.pfd = Pfd{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
   s_.hasPosition = false; s_.position = Position{};
