@@ -250,6 +250,26 @@ export class MissionController {
     else if (this.link?.connected) void this.disarm();
   }
 
+  /** Keyboard controls for the dashboard. The page filters editable fields and key repeats. */
+  handleShortcut(key: string): void {
+    switch (key.toLowerCase()) {
+      case "escape": this.panic(); break;
+      case "a":
+        if (this.state.connected && this.state.telemetry.armed === false && !this.state.armPending) void this.arm();
+        break;
+      case "b":
+        if (this.state.connected && this.state.telemetry.armed !== false && !this.state.armPending) void this.disarm();
+        break;
+      case "l":
+        if (!this.state.connecting) void (this.state.connected ? this.disconnect() : this.connect());
+        break;
+      case "o":
+        if (this.state.sending) void this.stopOutput("O pressed");
+        else this.startOutput();
+        break;
+    }
+  }
+
   // ---- control loop ----------------------------------------------------------------------------
   private runLoop(): void {
     const reverse = { left: new ReversePause(), right: new ReversePause() };

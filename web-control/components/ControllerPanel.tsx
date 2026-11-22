@@ -30,6 +30,12 @@ export function ControllerPanel({ controller, command, lost }: Props) {
       <Separator className="my-3 hidden lg:block" />
       <Scope title="Boat command" overlay={overlay} series={[{ name: "L", color: series.left, value: command.left }, { name: "R", color: series.right, value: command.right }, { name: "Rud", color: series.rudder, value: command.rudder }]} />
     </div>
-    <div className="mt-auto border-t border-border px-4 py-2 font-mono text-[11px] text-muted-foreground">A arm · B disarm · Esc stop + disarm</div>
+    <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+      <span><kbd className="rounded border border-border bg-panel-2 px-1 font-mono">A</kbd> arm</span>
+      <span><kbd className="rounded border border-border bg-panel-2 px-1 font-mono">L</kbd> link</span>
+      <span><kbd className="rounded border border-border bg-panel-2 px-1 font-mono">O</kbd> output</span>
+      <span><kbd className="rounded border border-border bg-panel-2 px-1 font-mono">B</kbd> disarm</span>
+      <span><kbd className="rounded border border-border bg-panel-2 px-1 font-mono">Esc</kbd> stop + disarm</span>
+    </div>
   </aside>;
 }

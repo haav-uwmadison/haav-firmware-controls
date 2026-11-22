@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 export type Tone = "ok" | "warn" | "danger" | "idle" | "neutral";
-export type ReadoutAction = { onClick: () => void; /** what clicking does, shown in the label */ hint: string; disabled?: boolean; title?: string };
+export type ReadoutAction = { onClick: () => void; /** action shown in the label */ hint: string; shortcut?: string; disabled?: boolean; title?: string };
 export type Readout = { label: string; value: string; tone?: Tone; badge?: boolean; live?: boolean; /** when set, the readout is the control: it shows the state and clicking changes it */ action?: ReadoutAction };
 
 export const toneText: Record<Tone, string> = {
@@ -27,8 +27,9 @@ export function StatusBar({ primary, secondary, actions }: Props) {
       <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {primary.map(item => {
           const body = <>
-            <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+            <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
               {item.label}{item.action && !item.action.disabled && <span className="text-live/80"> · {item.action.hint}</span>}
+              {item.action?.shortcut && <kbd className="rounded border border-border bg-panel-2 px-1 py-0.5 font-mono text-[9px] leading-none text-muted-foreground">{item.action.shortcut}</kbd>}
             </span>
             {item.badge
               ? <Badge className={cn("mt-0.5 w-fit text-xs font-bold tracking-[0.06em]", toneBadge[item.tone ?? "idle"])}>{item.value}</Badge>

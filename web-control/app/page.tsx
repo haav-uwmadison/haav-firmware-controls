@@ -40,9 +40,16 @@ export default function Home() {
   const { connected, connecting, telemetry, controller, sending, armPending, linkPhase, startBlockedReason } = state;
   const [followBoat, setFollowBoat] = useState(true);
 
-  // Esc is the panic key: stop output and disarm; disarm alone when idle.
+  // Keep keystroke handling in the controller; ignore shortcuts while typing in a control.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); mission.panic(); } };
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (!["escape", "a", "b", "l", "o"].includes(key)) return;
+      event.preventDefault(); mission.handleShortcut(key);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mission]);
@@ -57,21 +64,21 @@ export default function Home() {
     {
       label: "Armed", ...armedState, badge: true, live: true,
       action: telemetry.armed
-        ? { onClick: () => void mission.disarm(), hint: "click to disarm", disabled: !connected || !!armPending, title: "Disarm (Esc also disarms)" }
-        : { onClick: () => void mission.arm(), hint: "click to arm", disabled: !connected || !!armPending || telemetry.armed === null, title: "Set MANUAL mode and arm" },
+        ? { onClick: () => void mission.disarm(), hint: "disarm", shortcut: "B", disabled: !connected || !!armPending, title: "Disarm (B)" }
+        : { onClick: () => void mission.arm(), hint: "arm", shortcut: "A", disabled: !connected || !!armPending || telemetry.armed === null, title: "Set MANUAL mode and arm (A)" },
     },
     {
       label: "Output", ...outputReadout[state.outputPhase], live: true,
       action: sending
-        ? { onClick: () => void mission.stopOutput("stopped by user"), hint: "click to stop", title: "Stop control output (Esc also stops and disarms)" }
-        : { onClick: () => mission.startOutput(), hint: "click to start", disabled: !!startBlockedReason, title: startBlockedReason ?? "Start RC override at 20 Hz" },
+        ? { onClick: () => void mission.stopOutput("stopped by user"), hint: "stop", shortcut: "O", title: "Stop control output (O)" }
+        : { onClick: () => mission.startOutput(), hint: "start", shortcut: "O", disabled: !!startBlockedReason, title: startBlockedReason ?? "Start RC override at 20 Hz (O)" },
     },
     { label: "Mode", value: telemetry.mode },
     {
       label: "Link", ...linkReadout(linkPhase, state.lostSeconds), live: true,
       action: connected
-        ? { onClick: () => void mission.disconnect(), hint: "click to disconnect" }
-        : { onClick: () => void mission.connect(), hint: "click to connect", disabled: connecting, title: `Open the serial port at ${state.baud} baud` },
+        ? { onClick: () => void mission.disconnect(), hint: "disconnect", shortcut: "L" }
+        : { onClick: () => void mission.connect(), hint: "connect", shortcut: "L", disabled: connecting, title: `Open the serial port at ${state.baud} baud (L)` },
     },
     { label: "Controller", value: controller.connected ? "Connected" : state.controllerLost ? "Lost" : "—", tone: controller.connected ? "ok" : state.controllerLost ? "danger" : "idle" },
     { label: "Battery", value: telemetry.battery },
