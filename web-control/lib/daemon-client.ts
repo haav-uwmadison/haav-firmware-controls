@@ -1,0 +1,109 @@
+// Client for mission_daemon (daemon/ at the repo root). The daemon owns the controller and the serial
+// port and streams the same MissionState shape the in-browser controller produces, so the page is
+// unchanged. Protocol (JSON text frames):
+//   daemon -> browser: {type:"hello", ...state, logs:[...], trail:[[lat,lon]...], version}
+//                      {type:"state", ...state}            about 30 Hz
+//                      {type:"log", line:{id,time,kind,text}}
+//                      {type:"trail", point:[lat,lon]} | {type:"trailClear"}
+//   browser -> daemon: {name:"connect"|"disconnect"|"startOutput"|"stopOutput"|"arm"|"disarm"|"panic"|"clearTrail"}
+//                      {name:"setMotorSpan", span} | {name:"setBaud", baud}
+
+import type { MissionApi } from "./mission-api";
+import { initialMissionState, type LogLine, type MissionState, type TrailPoint } from "./mission-controller";
+
+export const DAEMON_URL = "ws://127.0.0.1:8765";
+const LOG_LIMIT = 200;
+
+type Hello = Partial<MissionState> & { type: "hello"; logs?: LogLine[]; trail?: TrailPoint[]; version?: string };
+
+/** Opens a short-lived socket to see whether the daemon is running. Resolves within `timeoutMs`. */
+export function probeDaemon(timeoutMs = 1500, url = DAEMON_URL): Promise<boolean> {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (ok: boolean) => { if (!done) { done = true; resolve(ok); } };
+    try {
+      const ws = new WebSocket(url);
+      const timer = window.setTimeout(() => { finish(false); ws.close(); }, timeoutMs);
+      ws.onopen = () => { window.clearTimeout(timer); finish(true); ws.close(); };
+      ws.onerror = () => { window.clearTimeout(timer); finish(false); };
+    } catch { finish(false); }
+  });
+}
+
+export class DaemonClient implements MissionApi {
+  private state: MissionState = initialMissionState;
+  private readonly listeners = new Set<() => void>();
+  private ws: WebSocket | null = null;
+  private disposed = false;
+  version = "";
+
+  constructor(private readonly url = DAEMON_URL, private readonly onClosed?: () => void) {}
+
+  getState = (): MissionState => this.state;
+  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+
+  private set(patch: Partial<MissionState>): void {
+    this.state = { ...this.state, ...patch };
+    for (const listener of this.listeners) listener();
+  }
+
+  start(): void {
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    ws.onmessage = event => this.onMessage(String(event.data));
+    ws.onclose = () => { this.ws = null; if (!this.disposed) this.onClosed?.(); };
+    ws.onerror = () => ws.close();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.ws?.close(); this.ws = null;
+  }
+
+  private onMessage(text: string): void {
+    let msg: Record<string, unknown>;
+    try { msg = JSON.parse(text); } catch { return; }
+    switch (msg.type) {
+      case "hello": {
+        const hello = msg as Hello;
+        this.version = hello.version ?? "";
+        const { type: _type, logs, trail, version: _version, ...rest } = hello;
+        void _type; void _version;
+        this.set({ ...rest, logs: logs ?? [], trail: trail ?? [] });
+        break;
+      }
+      case "state": {
+        const { type: _type, ...rest } = msg as Partial<MissionState> & { type: string };
+        void _type;
+        this.set(rest);
+        break;
+      }
+      case "log": {
+        const line = msg.line as LogLine;
+        this.set({ logs: [...this.state.logs, line].slice(-LOG_LIMIT) });
+        break;
+      }
+      case "trail": {
+        const point = msg.point as TrailPoint;
+        this.set({ trail: [...this.state.trail, point].slice(-1200) });
+        break;
+      }
+      case "trailClear": this.set({ trail: [] }); break;
+    }
+  }
+
+  private send(command: Record<string, unknown>): void {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(command));
+  }
+
+  setBaud(baud: string): void { this.send({ name: "setBaud", baud }); }
+  setMotorSpan(span: number): void { this.send({ name: "setMotorSpan", span: Math.round(span) }); }
+  clearTrail(): void { this.send({ name: "clearTrail" }); }
+  connect(): void { this.send({ name: "connect" }); }
+  disconnect(): void { this.send({ name: "disconnect" }); }
+  startOutput(): void { this.send({ name: "startOutput" }); }
+  stopOutput(reason: string): void { this.send({ name: "stopOutput", reason }); }
+  arm(): void { this.send({ name: "arm" }); }
+  disarm(): void { this.send({ name: "disarm" }); }
+  panic(): void { this.send({ name: "panic" }); }
+}

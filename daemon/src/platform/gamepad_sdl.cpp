@@ -1,0 +1,65 @@
+#include "platform/gamepad.hpp"
+
+#include <SDL.h>
+
+#include <cstdio>
+
+namespace platform {
+
+Gamepad::Gamepad() {
+  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+  SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+  if (SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0) {
+    std::fprintf(stderr, "gamepad: SDL_Init failed: %s\n", SDL_GetError());
+    return;
+  }
+  ready_ = true;
+  openFirst();
+}
+
+Gamepad::~Gamepad() {
+  if (pad_) SDL_GameControllerClose(static_cast<SDL_GameController*>(pad_));
+  if (ready_) SDL_Quit();
+}
+
+void Gamepad::openFirst() {
+  for (int i = 0; i < SDL_NumJoysticks(); i++) {
+    if (!SDL_IsGameController(i)) continue;
+    SDL_GameController* pad = SDL_GameControllerOpen(i);
+    if (!pad) continue;
+    pad_ = pad;
+    name_ = SDL_GameControllerName(pad) ? SDL_GameControllerName(pad) : "Game controller";
+    std::printf("gamepad: %s connected\n", name_.c_str());
+    return;
+  }
+}
+
+boat::Controller Gamepad::sample() {
+  boat::Controller c;
+  if (!ready_) return c;
+  SDL_Event e;
+  while (SDL_PollEvent(&e)) {
+    if (e.type == SDL_CONTROLLERDEVICEADDED && !pad_) openFirst();
+    if (e.type == SDL_CONTROLLERDEVICEREMOVED && pad_ && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(static_cast<SDL_GameController*>(pad_)))) {
+      SDL_GameControllerClose(static_cast<SDL_GameController*>(pad_));
+      pad_ = nullptr; std::printf("gamepad: %s disconnected\n", name_.c_str()); name_.clear();
+    }
+  }
+  if (!pad_) return c;
+  auto* pad = static_cast<SDL_GameController*>(pad_);
+  auto axis = [pad](SDL_GameControllerAxis a) { return SDL_GameControllerGetAxis(pad, a) / 32767.0f; };
+  c.connected = SDL_GameControllerGetAttached(pad) == SDL_TRUE;
+  c.lx = axis(SDL_CONTROLLER_AXIS_LEFTX);
+  c.ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);   // SDL reads up as negative; the boat wants forward = +1
+  c.rx = axis(SDL_CONTROLLER_AXIS_RIGHTX);
+  c.ry = -axis(SDL_CONTROLLER_AXIS_RIGHTY);
+  c.lt = axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+  c.rt = axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+  c.a = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A) != 0;
+  c.b = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B) != 0;
+  for (float* v : {&c.lx, &c.ly, &c.rx, &c.ry}) { if (*v > 1) *v = 1; if (*v < -1) *v = -1; }
+  for (float* v : {&c.lt, &c.rt}) { if (*v > 1) *v = 1; if (*v < 0) *v = 0; }
+  return c;
+}
+
+}  // namespace platform

@@ -1,0 +1,71 @@
+name: Build mission_daemon
+
+# Builds the laptop daemon on every platform teammates use and keeps the binaries as artifacts, so
+# nobody needs a C++ toolchain just to run the boat. Tags starting with daemon-v also publish a release.
+
+on:
+  push:
+    branches: [main]
+    paths: ["daemon/**", ".github/workflows/build-daemon.yml"]
+    tags: ["daemon-v*"]
+  pull_request:
+    paths: ["daemon/**", ".github/workflows/build-daemon.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, name: macOS (Apple Silicon), artifact: mission_daemon-macos-arm64, bin: build/mission_daemon }
+          - { os: windows-latest, name: Windows x64, artifact: mission_daemon-windows-x64, bin: build/Release/mission_daemon.exe }
+          - { os: ubuntu-latest, name: Linux x64, artifact: mission_daemon-linux-x64, bin: build/mission_daemon }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2 (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build
+
+      - name: Install SDL2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl2 ninja
+
+      - name: Configure
+        working-directory: daemon
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ runner.os != 'Windows' && '-G Ninja' || '' }}
+
+      - name: Build
+        working-directory: daemon
+        run: cmake --build build --parallel --config Release
+
+      - name: Smoke test
+        working-directory: daemon
+        run: ${{ matrix.bin }} --help
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: daemon/${{ matrix.bin }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/daemon-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Package
+        run: |
+          cd dist
+          for d in */; do d=${d%/}; (cd "$d" && zip -r "../$d.zip" .); done
+          ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
