@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { ExternalLink } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type Tone = "ok" | "warn" | "danger" | "idle" | "neutral";
@@ -43,7 +45,14 @@ export function StatusBar({ primary, secondary, actions }: Props) {
             : <div key={item.label} className={slot} role={item.live ? "status" : undefined} aria-live={item.live ? "polite" : undefined}>{body}</div>;
         })}
       </div>
-      <div className="flex shrink-0 items-center gap-2 px-4">{actions}</div>
+      <div className="flex shrink-0 items-center gap-2 px-4">
+        {actions}
+        <Button asChild variant="outline" size="sm">
+          <a href="https://grafana.haav.build/" target="_blank" rel="noreferrer" aria-label="Open Grafana in a new tab">
+            Grafana <ExternalLink aria-hidden="true" />
+          </a>
+        </Button>
+      </div>
     </div>
     <div className="tabular flex min-h-7 flex-wrap items-center gap-x-6 gap-y-1 bg-[#0d0d0f] px-4 py-1 font-mono text-xs text-muted-foreground">
       {secondary.map(item => <span key={item.label} className="whitespace-nowrap">{item.label} <b className={cn("font-semibold", item.tone ? toneText[item.tone] : "text-foreground")}>{item.value}</b></span>)}
