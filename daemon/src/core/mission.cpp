@@ -8,6 +8,7 @@
 namespace boat {
 
 namespace {
+constexpr double PI = 3.14159265358979323846;
 constexpr uint32_t LINK_SETTLE_MS = 3000;          // how long to wait before calling a silent port "No data"
 constexpr uint32_t ACK_TIMEOUT_MS = 2000;
 constexpr uint32_t LAST_MESSAGE_REFRESH_MS = 3000;  // "Last msg" would flicker at frame rate otherwise
@@ -282,7 +283,7 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
       s_.hasPosition = true;
       s_.position = Position{lat, lon, p.hdg != 65535, p.hdg / 100.0, gpsFix_, gpsSats_, now};
       // Trail: keep a point every ~1 m or every 2 s.
-      const double movedM = haveTrail_ ? std::hypot((lat - lastTrail_.lat) * 111320.0, (lon - lastTrail_.lon) * 111320.0 * std::cos(lat * M_PI / 180.0)) : 1e9;
+      const double movedM = haveTrail_ ? std::hypot((lat - lastTrail_.lat) * 111320.0, (lon - lastTrail_.lon) * 111320.0 * std::cos(lat * PI / 180.0)) : 1e9;
       if (!haveTrail_ || movedM > 1.0 || now - lastTrailAt_ > 2000) {
         haveTrail_ = true; lastTrail_ = TrailPoint{lat, lon}; lastTrailAt_ = now;
         s_.trail.push_back(lastTrail_);

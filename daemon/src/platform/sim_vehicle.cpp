@@ -7,6 +7,7 @@
 namespace platform {
 
 namespace {
+constexpr double PI = 3.14159265358979323846;
 constexpr uint8_t SYS = 1, COMP = 1;
 void statusText(std::vector<uint8_t>& out, uint8_t severity, const char* text) {
   mavlink_message_t msg;
@@ -70,9 +71,9 @@ std::vector<uint8_t> SimVehicle::poll() {
   const double targetSpeed = (l + r) / 2.0 * 2.5;   // 2.5 m/s at full throttle
   speedMps_ += (targetSpeed - speedMps_) * std::min(1.0, dt * 1.5);
   headingDeg_ = std::fmod(headingDeg_ + ((r - l) * 40.0 + rud * speedMps_ * 25.0) * dt + 360.0, 360.0);
-  const double rad = headingDeg_ * M_PI / 180.0;
+  const double rad = headingDeg_ * PI / 180.0;
   lat_ += speedMps_ * std::cos(rad) * dt / 111320.0;
-  lon_ += speedMps_ * std::sin(rad) * dt / (111320.0 * std::cos(lat_ * M_PI / 180.0));
+  lon_ += speedMps_ * std::sin(rad) * dt / (111320.0 * std::cos(lat_ * PI / 180.0));
   if (armed_) voltage_ = std::max(10.5f, voltage_ - static_cast<float>(dt) * 0.002f);
 
   if (now >= nextHeartbeat_) {
