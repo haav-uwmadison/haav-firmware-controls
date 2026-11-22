@@ -53,7 +53,7 @@ You do not need `make web` when using the hosted dashboard. For local frontend d
 4. Start the daemon:
 
    ```sh
-   ./daemon/run.sh
+   bash ./daemon/run.sh
    ```
 
    On its first run, the script configures and builds the C++ program and downloads its dependencies;
@@ -89,7 +89,7 @@ From the repository folder, run the simulator instead of opening a real serial p
 
 ```sh
 # macOS / Linux
-./daemon/run.sh --sim
+bash ./daemon/run.sh --sim
 ```
 
 ```powershell
