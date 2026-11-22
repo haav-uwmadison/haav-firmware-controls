@@ -106,4 +106,15 @@ export class DaemonClient implements MissionApi {
   arm(): void { this.send({ name: "arm" }); }
   disarm(): void { this.send({ name: "disarm" }); }
   panic(): void { this.send({ name: "panic" }); }
+  /** Same key map as MissionController.handleShortcut, decided from the daemon's last state. */
+  handleShortcut(key: string): void {
+    const s = this.state;
+    switch (key.toLowerCase()) {
+      case "escape": this.panic(); break;
+      case "a": if (s.connected && s.telemetry.armed === false && !s.armPending) this.arm(); break;
+      case "b": if (s.connected && s.telemetry.armed !== false && !s.armPending) this.disarm(); break;
+      case "l": if (!s.connecting) { if (s.connected) this.disconnect(); else this.connect(); } break;
+      case "o": if (s.sending) this.stopOutput("O pressed"); else this.startOutput(); break;
+    }
+  }
 }
