@@ -254,6 +254,7 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
       mavlink_heartbeat_t hb; mavlink_msg_heartbeat_decode(&msg, &hb);
       if (lostSince_) { log("Heartbeat back after " + std::to_string((now - lostSince_ + 500) / 1000) + " s"); lostSince_ = 0; }
       heartbeatAt_ = now;
+      if (!streamsRequested_) { streamsRequested_ = true; requestStreams(); }
       const char* v = vehicleName(hb.type); const char* m = modeName(hb.custom_mode);
       s_.telemetry.vehicle = v ? v : "MAV_TYPE " + std::to_string(hb.type);
       s_.telemetry.mode = m ? m : "Custom " + std::to_string(hb.custom_mode);
@@ -320,7 +321,8 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
     }
     case MAVLINK_MSG_ID_COMMAND_ACK: {
       mavlink_command_ack_t ack; mavlink_msg_command_ack_decode(&msg, &ack);
-      const std::string cmdName = ack.command == MAV_CMD_COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command == MAV_CMD_DO_SET_MODE ? "set mode" : "command " + std::to_string(ack.command);
+      if (ack.command == MAV_CMD_SET_MESSAGE_INTERVAL && ack.result == MAV_RESULT_ACCEPTED) break;   // four per connect; only failures are interesting
+      const std::string cmdName = ack.command == MAV_CMD_COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command == MAV_CMD_DO_SET_MODE ? "set mode" : ack.command == MAV_CMD_SET_MESSAGE_INTERVAL ? "message interval" : "command " + std::to_string(ack.command);
       const char* r = ackName(ack.result);
       log("ACK " + cmdName + ": " + (r ? r : std::to_string(ack.result)), ack.result == 0 ? LogKind::Ack : LogKind::Error);
       if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) clearAckWait();
@@ -368,6 +370,20 @@ bool Mission::sendHeartbeat() {
   return send(msg);
 }
 
+// ArduPilot only streams what the ground station asks for, and the telemetry-port defaults are a few
+// hertz at best. Ask for the messages behind the PFD and the map at useful rates.
+void Mission::requestStreams() {
+  struct Rate { uint16_t id; const char* name; float hz; };
+  static const Rate rates[] = {{MAVLINK_MSG_ID_ATTITUDE, "ATTITUDE", 10}, {MAVLINK_MSG_ID_GLOBAL_POSITION_INT, "GLOBAL_POSITION_INT", 5},
+                               {MAVLINK_MSG_ID_GPS_RAW_INT, "GPS_RAW_INT", 2}, {MAVLINK_MSG_ID_SYS_STATUS, "SYS_STATUS", 2}};
+  std::string summary;
+  for (const Rate& r : rates) {
+    if (!sendCommand(MAV_CMD_SET_MESSAGE_INTERVAL, r.id, 1000000.0f / r.hz)) { log("Stream request failed: write error", LogKind::Error); return; }
+    summary += (summary.empty() ? "" : ", ") + std::string(r.name) + " " + fmt("%g", r.hz) + " Hz";
+  }
+  log("Requested " + summary);
+}
+
 bool Mission::sendCommand(uint16_t command, float p1, float p2) {
   mavlink_message_t msg;
   mavlink_msg_command_long_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT, command, 0, p1, p2, 0, 0, 0, 0, 0);
@@ -378,7 +394,7 @@ void Mission::waitForAck(ArmPending what) { s_.armPending = what; ackDeadline_ =
 void Mission::clearAckWait() { ackDeadline_ = 0; s_.armPending = ArmPending::None; }
 
 void Mission::resetLinkState() {
-  heartbeatAt_ = 0; lostSince_ = 0; lastMessage_ = "—"; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
+  heartbeatAt_ = 0; lostSince_ = 0; streamsRequested_ = false; lastMessage_ = "—"; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
   rxStatus_ = mavlink_status_t{};
   s_.telemetry = Telemetry{}; s_.pfd = Pfd{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
   s_.hasPosition = false; s_.position = Position{};
