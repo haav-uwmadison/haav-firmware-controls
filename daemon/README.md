@@ -30,6 +30,9 @@ make help
 ```
 
 Pass daemon options through `DAEMON_ARGS`, for example `make run DAEMON_ARGS="--port /dev/cu.usbserial-1234 --baud 115200"`.
+If `mission_daemon` is already running on port 8765, `make run` and `make sim` report its PID and reuse
+that running instance instead of starting a duplicate. Stop the original process with Control-C before
+switching between real-boat and simulator modes.
 You do not need `make web` when using the hosted dashboard. For local frontend development only, run
 `make web` in another terminal; it starts Next.js at <http://localhost:3000>.
 

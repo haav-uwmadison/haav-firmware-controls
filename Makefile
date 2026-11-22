@@ -9,10 +9,10 @@ help: ## Show the available commands
 	  awk 'BEGIN {FS = ":.*## "} {printf "  make %-14s %s\n", $$1, $$2}'
 
 run: ## Build and run the laptop daemon for the boat (dashboard is hosted)
-	bash ./daemon/run.sh $(DAEMON_ARGS)
+	bash ./daemon/run-local.sh $(DAEMON_ARGS)
 
 sim: ## Build and run the daemon with a simulated boat (no serial port)
-	bash ./daemon/run.sh --sim $(DAEMON_ARGS)
+	bash ./daemon/run-local.sh --sim $(DAEMON_ARGS)
 
 build-daemon: ## Build the daemon without starting it
 	cmake -S daemon -B daemon/build -DCMAKE_BUILD_TYPE=Release
