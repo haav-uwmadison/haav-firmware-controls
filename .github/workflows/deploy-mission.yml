@@ -1,0 +1,53 @@
+name: Deploy Mission to Cloudflare Pages
+
+# Deploys web-control (the Mission dashboard) to the Cloudflare Pages project haav-mission-control.
+# Runs on every push to main that touches the app, and on demand from the Actions tab.
+# Needs two repository secrets: CLOUDFLARE_API_TOKEN (Cloudflare Pages: Edit) and CLOUDFLARE_ACCOUNT_ID.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web-control/**"
+      - ".github/workflows/deploy-mission.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cloudflare-pages-mission
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    defaults:
+      run:
+        working-directory: web-control
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-control/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and lint the dashboard
+        run: npx tsc --noEmit -p . && npx eslint app lib components
+
+      - name: Build static export
+        run: npm run build:export
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web-control
+          command: pages deploy .next-export --project-name haav-mission-control --branch main --commit-dirty=true
