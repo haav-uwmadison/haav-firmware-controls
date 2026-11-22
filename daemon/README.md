@@ -12,33 +12,94 @@ Xbox controller ──Bluetooth──> mission_daemon ──USB radio──> Pix
                                mission.haav.build (Chrome/Edge/Firefox/Safari)
 ```
 
-## Quick start for teammates
+## Run the daemon
 
-1. Pair the Xbox controller with your laptop over Bluetooth (hold the pair button until the logo flashes).
-2. Plug in the ground telemetry radio. Nothing else to install for it on macOS or Windows 10+.
-3. Build and run the daemon (first build takes a few minutes while it fetches dependencies):
+The daemon runs in a Terminal window on the laptop. Keep that window open while using the dashboard.
+It owns the Xbox controller and the Pixhawk serial port. Do **not** run MAVProxy or the Python agent at
+the same time if either one is using that serial port. You do not need to activate a Python virtual
+environment; this is the separate C++ daemon.
 
-   **macOS / Linux**
+### macOS
+
+1. Open Terminal and change to the repository folder (the folder containing `daemon/`):
+
+   ```sh
+   cd /path/to/haav-firmware-controls
+   ```
+
+2. Install the build tools once, if needed:
+
+   ```sh
+   xcode-select --install
+   brew install cmake ninja sdl2
+   ```
+
+3. Pair/connect the Xbox controller and plug in the ground telemetry radio. For a real boat, make sure
+   the Pixhawk is powered and the radio is attached to the laptop.
+4. Start the daemon:
+
    ```sh
    ./daemon/run.sh
    ```
-   Needs CMake and a C++ compiler: `xcode-select --install && brew install cmake ninja sdl2` on a Mac,
-   `sudo apt install cmake ninja-build g++ libsdl2-dev` on Debian/Ubuntu.
 
-   **Windows**
+   On its first run, the script configures and builds the C++ program and downloads its dependencies;
+   this can take a few minutes. Later runs reuse the build. Leave this Terminal window open.
+5. In Chrome, open <https://mission.haav.build>. The dashboard should detect the local daemon and show
+   the Backend readout as connected. Use the dashboard's Link control to connect the radio, then verify
+   the controller and telemetry before enabling Output. Press **A** to arm, **B** to disarm, and **Esc**
+   to stop output and disarm.
+6. To stop the daemon, return to its Terminal window and press **Control-C**.
+
+### Windows
+
+1. Open PowerShell in the repository folder (the folder containing `daemon/`).
+2. Install [CMake](https://cmake.org/download/) and the **Desktop development with C++** workload from
+   [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). SDL2 and
+   other project dependencies are fetched and built automatically.
+3. Pair/connect the Xbox controller and plug in the ground telemetry radio.
+4. Start the daemon:
+
    ```powershell
    .\daemon\run.ps1
    ```
-   Needs [CMake](https://cmake.org/download/) and the "Desktop development with C++" workload from
-   [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/). SDL2 is
-   fetched and built automatically.
 
-4. Open <https://mission.haav.build>. The page finds the daemon on localhost by itself and the Backend
-   readout in the status bar turns green. Click Link to open the radio, press a controller button,
-   click Output to start sending, A to arm, B to disarm, Esc to stop and disarm.
+   The first run builds the program and can take a few minutes. Keep PowerShell open while using the
+   dashboard. Open <https://mission.haav.build> in Chrome. Confirm the Backend readout shows connected,
+   use Link to connect the radio, and verify telemetry and controller input before enabling Output.
+   Press **A** to arm, **B** to disarm, and **Esc** to stop output and disarm.
+5. To stop the daemon, return to PowerShell and press **Ctrl-C**.
 
-Without a boat, try `./daemon/run.sh --sim` (or `.\daemon\run.ps1 --sim`): a simulated boat that
-answers arming, moves on the map when you push the sticks, and drains its battery.
+### Try it without the boat
+
+From the repository folder, run the simulator instead of opening a real serial port:
+
+```sh
+# macOS / Linux
+./daemon/run.sh --sim
+```
+
+```powershell
+# Windows
+.\daemon\run.ps1 --sim
+```
+
+Then open <https://mission.haav.build>. The simulated vehicle responds to arming, moves on the map
+when you move the sticks, and drains its simulated battery. Stop it with Control-C / Ctrl-C.
+
+### If the daemon says port 8765 is already in use
+
+Only one daemon can use `127.0.0.1:8765` at a time. Usually another `mission_daemon` is already running:
+find its Terminal window and stop it with Control-C, then start the daemon once. On macOS, identify the
+listener with:
+
+```sh
+lsof -nP -iTCP:8765 -sTCP:LISTEN
+```
+
+If the old Terminal is gone, stop that specific daemon process with `kill <PID>` (replace `<PID>` with
+the number shown by `lsof`), then run the start command again. Do not kill a process unless its name is
+`mission_daemon`. If another program owns the port, either close that program or choose another port
+with `--ws <port>`; the dashboard must use the same port.
 
 ## Options
 
