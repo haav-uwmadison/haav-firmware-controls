@@ -7,8 +7,8 @@ import { Toggle } from "@/components/ui/toggle";
 import { toneBadge } from "@/components/StatusBar";
 import { cn } from "@/lib/utils";
 
-export type BoatPosition = { lat: number; lon: number; /** degrees, 0..360, null when unknown */ heading: number | null; fixType: number; satellites: number; time: number };
-export type TrailPoint = [number, number];
+import type { BoatPosition, TrailPoint } from "@/lib/mission-controller";
+export type { BoatPosition, TrailPoint };
 
 type Props = {
   position: BoatPosition | null;

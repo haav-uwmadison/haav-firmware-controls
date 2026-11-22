@@ -7,8 +7,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 
-export type LogKind = "info" | "pixhawk" | "ack" | "warn" | "error";
-export type LogLine = { id: number; time: string; kind: LogKind; text: string };
+import type { LogKind, LogLine } from "@/lib/mission-controller";
+export type { LogKind, LogLine };
 
 type Filter = "all" | "pixhawk" | "ack" | "error";
 const filterLabel: Record<Filter, string> = { all: "All", pixhawk: "Pixhawk", ack: "ACK", error: "Errors" };

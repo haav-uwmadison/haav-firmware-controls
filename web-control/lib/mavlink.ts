@@ -135,10 +135,11 @@ export function decodeGpsRawInt(payload: Uint8Array): { fixType: number; satelli
 }
 
 /** Fused position from the EKF; hdg is 0..359.99 degrees or null when unknown. */
-export function decodeGlobalPositionInt(payload: Uint8Array): { lat: number; lon: number; altM: number; headingDeg: number | null } {
+export function decodeGlobalPositionInt(payload: Uint8Array): { lat: number; lon: number; altM: number; speedMps: number; headingDeg: number | null } {
   const v = view(payload, 28);
   const hdg = v.getUint16(26, true);
-  return { lat: v.getInt32(4, true) / 1e7, lon: v.getInt32(8, true) / 1e7, altM: v.getInt32(12, true) / 1000, headingDeg: hdg === 65535 ? null : hdg / 100 };
+  const vx = v.getInt16(20, true), vy = v.getInt16(22, true); // north/east velocity in cm/s
+  return { lat: v.getInt32(4, true) / 1e7, lon: v.getInt32(8, true) / 1e7, altM: v.getInt32(12, true) / 1000, speedMps: Math.hypot(vx, vy) / 100, headingDeg: hdg === 65535 ? null : hdg / 100 };
 }
 
 export function decodeStatusText(payload: Uint8Array): { severity: number; text: string } {

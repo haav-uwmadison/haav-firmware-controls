@@ -31,7 +31,36 @@ export function readGamepad(pad: Gamepad, time: number): ControllerState {
   };
 }
 
-/** Samples the first connected gamepad every animation frame. `latest` is a ref for code that must not wait on React renders. */
+/**
+ * Framework-free controller input: samples the first connected gamepad every animation frame and
+ * pushes each sample to subscribers. The loop runs only while someone is subscribed, so constructing
+ * one during server rendering is safe. This is what the mission controller consumes.
+ */
+export class GamepadSource {
+  private current: ControllerState = noController;
+  private listeners = new Set<(c: ControllerState) => void>();
+  private frame = 0;
+
+  latest(): ControllerState { return this.current; }
+
+  subscribe(listener: (c: ControllerState) => void): () => void {
+    this.listeners.add(listener);
+    if (this.listeners.size === 1) this.loop();
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) { cancelAnimationFrame(this.frame); this.frame = 0; }
+    };
+  }
+
+  private loop = () => {
+    const pad = navigator.getGamepads?.().find(p => p && p.connected) ?? null;
+    this.current = pad ? readGamepad(pad, performance.now()) : { ...noController, time: performance.now() };
+    for (const listener of this.listeners) listener(this.current);
+    this.frame = requestAnimationFrame(this.loop);
+  };
+}
+
+/** React hook form of the same sampling, used by the /direct page. `latest` is a ref for code that must not wait on renders. */
 export function useGamepad(): { state: ControllerState; latest: React.RefObject<ControllerState> } {
   const [state, setState] = useState<ControllerState>(noController);
   const latest = useRef<ControllerState>(noController);

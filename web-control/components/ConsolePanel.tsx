@@ -6,7 +6,8 @@ import { toneBadge, type Tone } from "@/components/StatusBar";
 import { MAX_MOTOR_SPAN, MIN_MOTOR_SPAN, PWM_NEUTRAL, type BoatPwm } from "@/lib/boat-control";
 import { cn } from "@/lib/utils";
 
-export type OutputPhase = "idle" | "sending" | "stopped" | "error";
+import type { OutputPhase } from "@/lib/mission-controller";
+export type { OutputPhase };
 
 type Props = {
   phase: OutputPhase;
