@@ -3,7 +3,7 @@
 // Keep this file free of browser or React code so it can be unit tested in Node.
 
 export const MSG = {
-  HEARTBEAT: 0, SYS_STATUS: 1, GPS_RAW_INT: 24, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
+  HEARTBEAT: 0, SYS_STATUS: 1, GPS_RAW_INT: 24, ATTITUDE: 30, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
   RC_CHANNELS_OVERRIDE: 70, VFR_HUD: 74, COMMAND_LONG: 76, COMMAND_ACK: 77, STATUSTEXT: 253,
 } as const;
 
@@ -140,6 +140,13 @@ export function decodeGlobalPositionInt(payload: Uint8Array): { lat: number; lon
   const hdg = v.getUint16(26, true);
   const vx = v.getInt16(20, true), vy = v.getInt16(22, true); // north/east velocity in cm/s
   return { lat: v.getInt32(4, true) / 1e7, lon: v.getInt32(8, true) / 1e7, altM: v.getInt32(12, true) / 1000, speedMps: Math.hypot(vx, vy) / 100, headingDeg: hdg === 65535 ? null : hdg / 100 };
+}
+
+/** Vehicle attitude from the EKF, converted from radians to degrees. Yaw is 0..360 (north = 0). */
+export function decodeAttitude(payload: Uint8Array): { rollDeg: number; pitchDeg: number; yawDeg: number; yawRateDps: number } {
+  const v = view(payload, 28);
+  const deg = 180 / Math.PI;
+  return { rollDeg: v.getFloat32(4, true) * deg, pitchDeg: v.getFloat32(8, true) * deg, yawDeg: ((v.getFloat32(12, true) * deg) % 360 + 360) % 360, yawRateDps: v.getFloat32(24, true) * deg };
 }
 
 export function decodeStatusText(payload: Uint8Array): { severity: number; text: string } {

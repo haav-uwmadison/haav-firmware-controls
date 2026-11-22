@@ -10,6 +10,7 @@ import { ConsolePanel } from "@/components/ConsolePanel";
 import { ControllerPanel } from "@/components/ControllerPanel";
 import { GpsMapPanel } from "@/components/GpsMap";
 import { LogPanel } from "@/components/LogPanel";
+import { PfdPanel } from "@/components/Pfd";
 import { StatusBar, type Readout, type Tone } from "@/components/StatusBar";
 import { controllerToCommand } from "@/lib/boat-control";
 import { bauds, type LinkPhase, type OutputPhase } from "@/lib/mission-controller";
@@ -111,9 +112,10 @@ export default function Home() {
         <main className="order-1 mx-0 flex w-full max-w-none min-h-0 flex-col gap-4 p-4 lg:order-2">
           <ConsolePanel phase={state.outputPhase} pwm={state.pwm} overridesSent={state.overridesSent} heartbeatsSent={state.heartbeatsSent} banner={state.banner}
             motorSpan={state.motorSpan} onMotorSpanChange={span => mission.setMotorSpan(span)} format={format} />
-          <div className="grid min-h-[260px] flex-1 grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid min-h-[260px] flex-1 grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="min-h-[300px]" />
             <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="min-h-[260px]" />
-            <LogPanel lines={state.logs} className="min-h-[220px]" />
+            <LogPanel lines={state.logs} className="min-h-[220px] xl:col-span-2 2xl:col-span-1" />
           </div>
         </main>
       </div>

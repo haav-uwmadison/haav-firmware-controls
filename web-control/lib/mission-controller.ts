@@ -5,7 +5,7 @@
 
 import { commandToPwm, controllerToCommand, DEFAULT_MOTOR_SPAN, MAX_MOTOR_SPAN, MIN_MOTOR_SPAN, pwmToChannels, rudderNeutralChannels, ReversePause, type BoatPwm } from "./boat-control";
 import { noController, type ControllerState } from "./gamepad";
-import { ackResults, build, decodeCommandAck, decodeGlobalPositionInt, decodeGpsRawInt, decodeHeartbeat, decodeStatusText, decodeSysStatus, MAV_CMD, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, MavlinkEncoder, MavlinkParser, messageNames, MSG, ROVER_MODE_MANUAL, type Frame } from "./mavlink";
+import { ackResults, build, decodeAttitude, decodeCommandAck, decodeGlobalPositionInt, decodeGpsRawInt, decodeHeartbeat, decodeStatusText, decodeSysStatus, MAV_CMD, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, MavlinkEncoder, MavlinkParser, messageNames, MSG, ROVER_MODE_MANUAL, type Frame } from "./mavlink";
 import { SerialLink } from "./serial-link";
 
 // ---- types shared with the UI -----------------------------------------------------------------
@@ -18,12 +18,14 @@ export type ArmPending = false | "arm" | "disarm";
 export type Telemetry = { vehicle: string; mode: string; armed: boolean | null; gps: string; battery: string; speed: string; heading: string; last: string };
 export type BoatPosition = { lat: number; lon: number; /** degrees 0..360, null when unknown */ heading: number | null; fixType: number; satellites: number; time: number };
 export type TrailPoint = [number, number];
+/** Numbers behind the primary flight display; null until the Pixhawk has sent them. */
+export type Pfd = { rollDeg: number | null; pitchDeg: number | null; yawRateDps: number | null; speedMps: number | null; headingDeg: number | null };
 
 export type MissionState = {
   // link
   connected: boolean; connecting: boolean; linkPhase: LinkPhase; lostSeconds: number; baud: string; portLabel: string;
   telemetry: Telemetry; frames: number; bytesIn: number; recovered: number; badCrc: number;
-  logs: LogLine[]; position: BoatPosition | null; trail: TrailPoint[];
+  logs: LogLine[]; position: BoatPosition | null; trail: TrailPoint[]; pfd: Pfd;
   // input
   controller: ControllerState; controllerLost: boolean;
   // output
@@ -62,6 +64,7 @@ const STORAGE_KEY_MOTOR_SPAN = "mission.motorSpan";
 
 export const neutralPwm: BoatPwm = { left: 1500, right: 1500, rudder: 1500 };
 export const bauds = ["57600", "115200", "921600"];
+export const blankPfd: Pfd = { rollDeg: null, pitchDeg: null, yawRateDps: null, speedMps: null, headingDeg: null };
 const blankTelemetry: Telemetry = { vehicle: "—", mode: "—", armed: null, gps: "—", battery: "—", speed: "—", heading: "—", last: "—" };
 const modeNames: Record<number, string> = { 0: "MANUAL", 1: "ACRO", 2: "STEERING", 3: "HOLD", 4: "LOITER", 5: "FOLLOW", 6: "GUIDED", 10: "AUTO", 11: "RTL", 12: "SMART_RTL", 15: "GUIDED_NOGPS", 16: "INITIALISING" };
 const vehicleTypes: Record<number, string> = { 1: "Fixed wing", 2: "Quadrotor", 6: "Ground station", 10: "Ground rover", 11: "Surface boat", 12: "Submarine", 13: "Hexarotor", 14: "Octorotor", 29: "Ground rover" };
@@ -69,7 +72,7 @@ const usbVendors: Record<number, string> = { 0x0403: "FTDI", 0x10c4: "Silicon La
 
 export const initialMissionState: MissionState = {
   connected: false, connecting: false, linkPhase: "disconnected", lostSeconds: 0, baud: "57600", portLabel: "—",
-  telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [],
+  telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [], pfd: blankPfd,
   controller: noController, controllerLost: false,
   sending: false, outputPhase: "idle", pwm: neutralPwm, overridesSent: 0, heartbeatsSent: 0, banner: null,
   armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, startBlockedReason: "Connect to the Pixhawk first",
@@ -332,7 +335,11 @@ export class MissionController {
       this.set(patch);
     } else if (frame.id === MSG.GLOBAL_POSITION_INT) {
       const pos = decodeGlobalPositionInt(frame.payload);
-      const patch: Partial<MissionState> = { telemetry: { ...t, speed: `${(pos.speedMps * 1.94384).toFixed(1)} kn`, heading: pos.headingDeg === null ? "—" : `${Math.round(pos.headingDeg) % 360}°` } };
+      const patch: Partial<MissionState> = {
+        telemetry: { ...t, speed: `${(pos.speedMps * 1.94384).toFixed(1)} kn`, heading: pos.headingDeg === null ? "—" : `${Math.round(pos.headingDeg) % 360}°` },
+        // ATTITUDE's yaw is the better heading source (higher rate); keep the EKF heading only until it shows up.
+        pfd: { ...this.state.pfd, speedMps: pos.speedMps, headingDeg: this.state.pfd.rollDeg === null ? pos.headingDeg : this.state.pfd.headingDeg },
+      };
       if (pos.lat === 0 && pos.lon === 0) { this.set(patch); return; }
       const now = Date.now();
       patch.position = { lat: pos.lat, lon: pos.lon, heading: pos.headingDeg, ...this.gps, time: now };
@@ -344,6 +351,9 @@ export class MissionController {
         patch.trail = [...this.state.trail, [pos.lat, pos.lon] as TrailPoint].slice(-TRAIL_LIMIT);
       }
       this.set(patch);
+    } else if (frame.id === MSG.ATTITUDE) {
+      const att = decodeAttitude(frame.payload);
+      this.set({ pfd: { ...this.state.pfd, rollDeg: att.rollDeg, pitchDeg: att.pitchDeg, yawRateDps: att.yawRateDps, headingDeg: att.yawDeg } });
     } else if (frame.id === MSG.SYS_STATUS) {
       const sys = decodeSysStatus(frame.payload);
       this.set({ telemetry: { ...t, battery: sys.voltageMv === 65535 ? "n/a" : `${(sys.voltageMv / 1000).toFixed(2)} V${sys.batteryRemaining >= 0 ? ` · ${sys.batteryRemaining}%` : ""}` } });
@@ -400,6 +410,6 @@ export class MissionController {
 
   private resetLinkState(): void {
     this.heartbeatAt = 0; this.lostSince = 0; this.lastMessage = "—"; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
-    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null });
+    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd });
   }
 }

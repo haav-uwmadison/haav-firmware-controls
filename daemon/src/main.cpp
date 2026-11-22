@@ -7,6 +7,7 @@
 //   mission_daemon --list-ports         show serial candidates and exit
 
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -29,6 +30,18 @@ namespace {
 constexpr const char* VERSION = "0.1.0";
 constexpr int DEFAULT_WS_PORT = 8765;
 constexpr uint32_t STATE_BROADCAST_MS = 33;   // 30 Hz is plenty for the gauges and graphs
+volatile std::sig_atomic_t shutdownSignal = 0;
+
+void handleShutdownSignal(int signal) { shutdownSignal = signal; }
+
+void installShutdownHandlers() {
+  // SDL may install its own SIGINT handler during SDL_Init. Replace it after
+  // Gamepad construction so Ctrl-C sets a flag that the main loop can handle.
+  std::signal(SIGINT, handleShutdownSignal);
+#ifdef SIGTERM
+  std::signal(SIGTERM, handleShutdownSignal);
+#endif
+}
 
 uint32_t monotonicMs() {
   using namespace std::chrono;
@@ -55,6 +68,12 @@ json positionJson(const MissionState& s) {
   return {{"lat", p.lat}, {"lon", p.lon}, {"heading", p.hasHeading ? json(p.heading) : json(nullptr)}, {"fixType", p.fixType}, {"satellites", p.satellites}, {"time", p.timeMs}};
 }
 
+json pfdJson(const Pfd& p) {
+  const auto opt = [](bool has, double v) { return has ? json(v) : json(nullptr); };
+  return {{"rollDeg", opt(p.hasAttitude, p.rollDeg)}, {"pitchDeg", opt(p.hasAttitude, p.pitchDeg)}, {"yawRateDps", opt(p.hasAttitude, p.yawRateDps)},
+          {"speedMps", opt(p.hasSpeed, p.speedMps)}, {"headingDeg", opt(p.hasHeading, p.headingDeg)}};
+}
+
 /** The same field names as MissionState in web-control/lib/mission-controller.ts. */
 json stateJson(const Mission& m, const std::string& controllerName) {
   const MissionState& s = m.state();
@@ -68,7 +87,7 @@ json stateJson(const Mission& m, const std::string& controllerName) {
     {"telemetry", {{"vehicle", s.telemetry.vehicle}, {"mode", s.telemetry.mode}, {"armed", s.telemetry.armed < 0 ? json(nullptr) : json(s.telemetry.armed == 1)},
                    {"gps", s.telemetry.gps}, {"battery", s.telemetry.battery}, {"speed", s.telemetry.speed}, {"heading", s.telemetry.heading}, {"last", s.telemetry.last}}},
     {"frames", s.frames}, {"bytesIn", s.bytesIn}, {"recovered", s.recovered}, {"badCrc", s.badCrc},
-    {"position", positionJson(s)},
+    {"position", positionJson(s)}, {"pfd", pfdJson(s.pfd)},
     {"controller", controller}, {"controllerLost", s.controllerLost},
     {"sending", s.sending}, {"outputPhase", name(s.outputPhase)},
     {"pwm", {{"left", s.pwm.left}, {"right", s.pwm.right}, {"rudder", s.pwm.rudder}}},
@@ -123,6 +142,7 @@ int main(int argc, char** argv) {
   platform::SerialPort serial;
   platform::SimVehicle sim(monotonicMs);
   platform::Gamepad gamepad;
+  installShutdownHandlers();
   bool simLinkOpen = false;
 
   MissionIO io;
@@ -174,7 +194,7 @@ int main(int argc, char** argv) {
 
   uint8_t buf[4096];
   uint32_t nextBroadcast = 0;
-  for (;;) {
+  while (!shutdownSignal) {
     const uint32_t now = monotonicMs();
     // 1. controller
     mission.onController(gamepad.sample());
@@ -207,4 +227,11 @@ int main(int argc, char** argv) {
     if (now >= nextBroadcast) { nextBroadcast = now + STATE_BROADCAST_MS; if (ws.clientCount() > 0) ws.broadcast(stateJson(mission, gamepad.name()).dump()); }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
+
+  std::printf("\nShutting down: stopping output and disarming.\n");
+  std::fflush(stdout);
+  if (io.linkConnected()) mission.panic();
+  closeLink("");
+  std::printf("Mission daemon stopped.\n");
+  return 0;
 }

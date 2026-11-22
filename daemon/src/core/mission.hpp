@@ -43,6 +43,12 @@ struct Position {
 
 struct TrailPoint { double lat = 0, lon = 0; };
 
+/** Numbers behind the dashboard's primary flight display; the has* flags mirror the nulls in the JSON. */
+struct Pfd {
+  bool hasAttitude = false, hasSpeed = false, hasHeading = false;
+  double rollDeg = 0, pitchDeg = 0, yawRateDps = 0, speedMps = 0, headingDeg = 0;
+};
+
 struct MissionState {
   bool connected = false, connecting = false;
   LinkPhase linkPhase = LinkPhase::Disconnected;
@@ -53,6 +59,7 @@ struct MissionState {
   uint32_t frames = 0, bytesIn = 0, recovered = 0, badCrc = 0;
   bool hasPosition = false;
   Position position;
+  Pfd pfd;
   std::vector<TrailPoint> trail;
   Controller controller;
   bool controllerLost = false;
