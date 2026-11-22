@@ -19,6 +19,20 @@ It owns the Xbox controller and the Pixhawk serial port. Do **not** run MAVProxy
 the same time if either one is using that serial port. You do not need to activate a Python virtual
 environment; this is the separate C++ daemon.
 
+From the repository root on macOS/Linux, use the root Makefile:
+
+```sh
+make run        # build and run the daemon; use the hosted dashboard at mission.haav.build
+make sim        # build and run the simulated boat, without a serial port
+make build-daemon
+make list-ports
+make help
+```
+
+Pass daemon options through `DAEMON_ARGS`, for example `make run DAEMON_ARGS="--port /dev/cu.usbserial-1234 --baud 115200"`.
+You do not need `make web` when using the hosted dashboard. For local frontend development only, run
+`make web` in another terminal; it starts Next.js at <http://localhost:3000>.
+
 ### macOS
 
 1. Open Terminal and change to the repository folder (the folder containing `daemon/`):
