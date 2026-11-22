@@ -5,7 +5,7 @@
 
 import { commandToPwm, controllerToCommand, DEFAULT_MOTOR_SPAN, MAX_MOTOR_SPAN, MIN_MOTOR_SPAN, pwmToChannels, rudderNeutralChannels, ReversePause, type BoatPwm } from "./boat-control";
 import { noController, type ControllerState } from "./gamepad";
-import { ackResults, build, decodeAttitude, decodeCommandAck, decodeGlobalPositionInt, decodeGpsRawInt, decodeHeartbeat, decodeStatusText, decodeSysStatus, MAV_CMD, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, MavlinkEncoder, MavlinkParser, messageNames, MSG, ROVER_MODE_MANUAL, type Frame } from "./mavlink";
+import { ackResults, build, decodeAttitude, decodeCommandAck, decodeGlobalPositionInt, decodeGpsRawInt, decodeHeartbeat, decodeParamValue, decodeStatusText, decodeSysStatus, MAV_CMD, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, MavlinkEncoder, MavlinkParser, messageNames, MSG, ROVER_MODE_MANUAL, type Frame } from "./mavlink";
 import { SerialLink } from "./serial-link";
 
 // ---- types shared with the UI -----------------------------------------------------------------
@@ -18,6 +18,9 @@ export type ArmPending = false | "arm" | "disarm";
 export type Telemetry = { vehicle: string; mode: string; armed: boolean | null; gps: string; battery: string; speed: string; heading: string; last: string };
 export type BoatPosition = { lat: number; lon: number; /** degrees 0..360, null when unknown */ heading: number | null; fixType: number; satellites: number; time: number };
 export type TrailPoint = [number, number];
+/** One Pixhawk parameter. `type` is MAV_PARAM_TYPE (1 UINT8 … 9 REAL32). */
+export type Param = { name: string; value: number; type: number; index: number };
+export type ParamTable = { byName: Record<string, Param>; count: number; received: number; loading: boolean; updatedAt: number };
 /** Numbers behind the primary flight display; null until the Pixhawk has sent them. */
 export type Pfd = { rollDeg: number | null; pitchDeg: number | null; yawRateDps: number | null; speedMps: number | null; headingDeg: number | null };
 
@@ -25,7 +28,7 @@ export type MissionState = {
   // link
   connected: boolean; connecting: boolean; linkPhase: LinkPhase; lostSeconds: number; baud: string; portLabel: string;
   telemetry: Telemetry; frames: number; bytesIn: number; recovered: number; badCrc: number;
-  logs: LogLine[]; position: BoatPosition | null; trail: TrailPoint[]; pfd: Pfd;
+  logs: LogLine[]; position: BoatPosition | null; trail: TrailPoint[]; pfd: Pfd; params: ParamTable;
   // input
   controller: ControllerState; controllerLost: boolean;
   // output
@@ -60,12 +63,16 @@ const LAST_MESSAGE_REFRESH_MS = 3000;
 const STOPPED_BADGE_MS = 3000;
 const LOG_LIMIT = 200;
 const TRAIL_LIMIT = 1200;                                // about 40 minutes at one point per 2 s
+const PARAM_FLUSH_MS = 100;                              // batch PARAM_VALUEs into state updates
+const PARAM_GAP_MS = 1500;                               // silence before asking for missing parameters
+const PARAM_RETRY_BATCH = 40, PARAM_RETRY_LIMIT = 6;
 const STORAGE_KEY_MOTOR_SPAN = "mission.motorSpan";
 
 export const neutralPwm: BoatPwm = { left: 1500, right: 1500, rudder: 1500 };
 export const bauds = ["57600", "115200", "921600"];
 /** Message rates to ask the Pixhawk for once its heartbeat arrives: [message id, Hz]. */
 export const streamRates: [number, number][] = [[MSG.ATTITUDE, 10], [MSG.GLOBAL_POSITION_INT, 5], [MSG.GPS_RAW_INT, 2], [MSG.SYS_STATUS, 2]];
+export const blankParams: ParamTable = { byName: {}, count: 0, received: 0, loading: false, updatedAt: 0 };
 export const blankPfd: Pfd = { rollDeg: null, pitchDeg: null, yawRateDps: null, speedMps: null, headingDeg: null };
 const blankTelemetry: Telemetry = { vehicle: "—", mode: "—", armed: null, gps: "—", battery: "—", speed: "—", heading: "—", last: "—" };
 const modeNames: Record<number, string> = { 0: "MANUAL", 1: "ACRO", 2: "STEERING", 3: "HOLD", 4: "LOITER", 5: "FOLLOW", 6: "GUIDED", 10: "AUTO", 11: "RTL", 12: "SMART_RTL", 15: "GUIDED_NOGPS", 16: "INITIALISING" };
@@ -74,7 +81,7 @@ const usbVendors: Record<number, string> = { 0x0403: "FTDI", 0x10c4: "Silicon La
 
 export const initialMissionState: MissionState = {
   connected: false, connecting: false, linkPhase: "disconnected", lostSeconds: 0, baud: "57600", portLabel: "—",
-  telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [], pfd: blankPfd,
+  telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [], pfd: blankPfd, params: blankParams,
   controller: noController, controllerLost: false,
   sending: false, outputPhase: "idle", pwm: neutralPwm, overridesSent: 0, heartbeatsSent: 0, banner: null,
   armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, startBlockedReason: "Connect to the Pixhawk first",
@@ -92,6 +99,11 @@ export class MissionController {
   private heartbeatAt = 0;
   private lostSince = 0;
   private streamsRequested = false;
+  private paramBuffer = new Map<string, Param>();
+  private paramCount = 0;
+  private lastParamAt = 0;
+  private paramRetries = 0;
+  private paramFlush?: ReturnType<typeof setTimeout>;
   private connectedAt = 0;
   private lastMessage = "—";
   private seenErrors = new Set<string>();
@@ -327,7 +339,7 @@ export class MissionController {
       const hb = decodeHeartbeat(frame.payload);
       if (this.lostSince) { this.log(`Heartbeat back after ${Math.round((Date.now() - this.lostSince) / 1000)} s`); this.lostSince = 0; }
       this.heartbeatAt = Date.now();
-      if (!this.streamsRequested) { this.streamsRequested = true; void this.requestStreams(); }
+      if (!this.streamsRequested) { this.streamsRequested = true; void this.requestStreams().then(() => this.refreshParams()); }
       this.set({ telemetry: { ...t, vehicle: vehicleTypes[hb.type] ?? `MAV_TYPE ${hb.type}`, mode: modeNames[hb.customMode] ?? `Custom ${hb.customMode}`, armed: hb.armed } });
     } else if (frame.id === MSG.GPS_RAW_INT) {
       const gps = decodeGpsRawInt(frame.payload);
@@ -355,6 +367,11 @@ export class MissionController {
         patch.trail = [...this.state.trail, [pos.lat, pos.lon] as TrailPoint].slice(-TRAIL_LIMIT);
       }
       this.set(patch);
+    } else if (frame.id === MSG.PARAM_VALUE) {
+      const p = decodeParamValue(frame.payload);
+      this.paramBuffer.set(p.name, { name: p.name, value: p.value, type: p.type, index: p.index });
+      this.paramCount = p.count; this.lastParamAt = Date.now();
+      if (!this.paramFlush) this.paramFlush = setTimeout(() => this.flushParams(), PARAM_FLUSH_MS);
     } else if (frame.id === MSG.ATTITUDE) {
       const att = decodeAttitude(frame.payload);
       this.set({ pfd: { ...this.state.pfd, rollDeg: att.rollDeg, pitchDeg: att.pitchDeg, yawRateDps: att.yawRateDps, headingDeg: att.yawDeg } });
@@ -377,6 +394,7 @@ export class MissionController {
   private watchdog(): void {
     if (!this.link?.connected) return;
     const now = Date.now();
+    void this.paramWatchdog(now);
     if (this.heartbeatAt) {
       const age = now - this.heartbeatAt;
       if (age > HEARTBEAT_TIMEOUT_MS) {
@@ -411,6 +429,43 @@ export class MissionController {
     this.timers.ack = setTimeout(() => { this.set({ armPending: false }); this.log(`No ACK for ${what} within ${ACK_TIMEOUT_MS / 1000} s`, "warn"); }, ACK_TIMEOUT_MS);
   }
 
+  // ---- parameters --------------------------------------------------------------------------------
+  /** Ask the Pixhawk for its whole parameter table. Runs on every connect; the panel's Refresh re-runs it. */
+  async refreshParams(): Promise<void> {
+    if (!this.state.connected) return;
+    this.paramBuffer.clear(); this.paramCount = 0; this.paramRetries = 0; this.lastParamAt = Date.now();
+    this.set({ params: { ...blankParams, loading: true } });
+    await this.send(MSG.PARAM_REQUEST_LIST, build.paramRequestList(TARGET_SYSTEM, TARGET_COMPONENT));
+    this.log("Requested the parameter list");
+  }
+
+  private flushParams(): void {
+    this.paramFlush = undefined;
+    const byName = { ...this.state.params.byName };
+    for (const p of this.paramBuffer.values()) byName[p.name] = p;
+    this.paramBuffer.clear();
+    const received = Object.keys(byName).length, count = Math.max(this.paramCount, received);
+    const done = received >= count;
+    if (done && this.state.params.loading) this.log(`${count} parameters loaded`);
+    this.set({ params: { byName, count, received, loading: !done, updatedAt: Date.now() } });
+  }
+
+  /** The list stream drops frames on a radio link; ask for the gaps one index at a time. */
+  private async paramWatchdog(now: number): Promise<void> {
+    const t = this.state.params;
+    if (!t.loading || !t.count || now - this.lastParamAt < PARAM_GAP_MS) return;
+    if (this.paramRetries >= PARAM_RETRY_LIMIT) {
+      this.log(`${t.count - t.received} parameters never arrived; press Refresh to try again`, "warn");
+      this.set({ params: { ...t, loading: false } });
+      return;
+    }
+    const have = new Set(Object.values(t.byName).map(p => p.index));
+    const missing: number[] = [];
+    for (let i = 0; i < t.count && missing.length < PARAM_RETRY_BATCH; i++) if (!have.has(i)) missing.push(i);
+    this.paramRetries++; this.lastParamAt = now;
+    for (const index of missing) await this.send(MSG.PARAM_REQUEST_READ, build.paramRequestRead(TARGET_SYSTEM, TARGET_COMPONENT, index));
+  }
+
   /**
    * ArduPilot only streams what the ground station asks for, and the telemetry-port defaults are a
    * few hertz at best. Ask for the messages behind the PFD and the map at useful rates.
@@ -425,7 +480,8 @@ export class MissionController {
   private clearAckWait(): void { clearTimeout(this.timers.ack); if (this.state.armPending) this.set({ armPending: false }); }
 
   private resetLinkState(): void {
-    this.heartbeatAt = 0; this.lostSince = 0; this.streamsRequested = false; this.lastMessage = "—"; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
-    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd });
+    this.heartbeatAt = 0; this.lostSince = 0; this.streamsRequested = false; this.lastMessage = "—";
+    clearTimeout(this.paramFlush); this.paramFlush = undefined; this.paramBuffer.clear(); this.paramCount = 0; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
+    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd, params: blankParams });
   }
 }

@@ -116,7 +116,7 @@ lsof -nP -iTCP:8765 -sTCP:LISTEN
 If the old Terminal is gone, stop that specific daemon process with `kill <PID>` (replace `<PID>` with
 the number shown by `lsof`), then run the start command again. Do not kill a process unless its name is
 `mission_daemon`. If another program owns the port, either close that program or choose another port
-with `--ws <port>`; the dashboard must use the same port.
+with `--ws <port>` and open the dashboard as `https://mission.haav.build/?ws=<port>` so it looks there.
 
 ## Options
 

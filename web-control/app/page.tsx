@@ -11,6 +11,7 @@ import { ControllerPanel } from "@/components/ControllerPanel";
 import { GpsMapPanel } from "@/components/GpsMap";
 import { LogPanel } from "@/components/LogPanel";
 import { PfdPanel } from "@/components/Pfd";
+import { ParametersPanel } from "@/components/ParametersPanel";
 import { StatusBar, type Readout, type Tone } from "@/components/StatusBar";
 import { controllerToCommand } from "@/lib/boat-control";
 import { bauds, type LinkPhase, type OutputPhase } from "@/lib/mission-controller";
@@ -130,6 +131,7 @@ export default function Home() {
             <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />
             <LogPanel lines={state.logs} className="h-[440px] xl:col-span-2 2xl:col-span-1" />
           </div>
+          <ParametersPanel params={state.params} connected={connected} vehicle={telemetry.vehicle} onRefresh={() => void mission.refreshParams()} className="h-[520px]" />
         </main>
       </div>
     </div>

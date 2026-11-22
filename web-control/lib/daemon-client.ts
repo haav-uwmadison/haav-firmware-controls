@@ -5,19 +5,25 @@
 //                      {type:"state", ...state}            about 30 Hz
 //                      {type:"log", line:{id,time,kind,text}}
 //                      {type:"trail", point:[lat,lon]} | {type:"trailClear"}
-//   browser -> daemon: {name:"connect"|"disconnect"|"startOutput"|"stopOutput"|"arm"|"disarm"|"panic"|"clearTrail"}
+//                      {type:"params", items:[{name,value,type,index}], count, loading} | {type:"paramsClear", loading}
+//   browser -> daemon: {name:"connect"|"disconnect"|"startOutput"|"stopOutput"|"arm"|"disarm"|"panic"|"clearTrail"|"refreshParams"}
 //                      {name:"setMotorSpan", span} | {name:"setBaud", baud}
 
 import type { MissionApi } from "./mission-api";
-import { initialMissionState, type LogLine, type MissionState, type TrailPoint } from "./mission-controller";
+import { blankParams, initialMissionState, type LogLine, type MissionState, type Param, type TrailPoint } from "./mission-controller";
 
-export const DAEMON_URL = "ws://127.0.0.1:8765";
+export const DAEMON_PORT = 8765;
+/** `?ws=<port>` on the page picks a daemon started with `--ws <port>`; otherwise the default port. */
+export function daemonUrl(): string {
+  const port = typeof window === "undefined" ? null : Number(new URLSearchParams(window.location.search).get("ws"));
+  return `ws://127.0.0.1:${port && port > 0 && port < 65536 ? port : DAEMON_PORT}`;
+}
 const LOG_LIMIT = 200;
 
 type Hello = Partial<MissionState> & { type: "hello"; logs?: LogLine[]; trail?: TrailPoint[]; version?: string };
 
 /** Opens a short-lived socket to see whether the daemon is running. Resolves within `timeoutMs`. */
-export function probeDaemon(timeoutMs = 1500, url = DAEMON_URL): Promise<boolean> {
+export function probeDaemon(timeoutMs = 1500, url = daemonUrl()): Promise<boolean> {
   return new Promise(resolve => {
     let done = false;
     const finish = (ok: boolean) => { if (!done) { done = true; resolve(ok); } };
@@ -37,7 +43,7 @@ export class DaemonClient implements MissionApi {
   private disposed = false;
   version = "";
 
-  constructor(private readonly url = DAEMON_URL, private readonly onClosed?: () => void) {}
+  constructor(private readonly url = daemonUrl(), private readonly onClosed?: () => void) {}
 
   getState = (): MissionState => this.state;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -89,6 +95,15 @@ export class DaemonClient implements MissionApi {
         break;
       }
       case "trailClear": this.set({ trail: [] }); break;
+      case "params": {
+        // Batched PARAM_VALUEs from the daemon; the full table also rides in hello.
+        const { items, count, loading } = msg as { items: Param[]; count: number; loading: boolean };
+        const byName = { ...this.state.params.byName };
+        for (const p of items) byName[p.name] = p;
+        this.set({ params: { byName, count, received: Object.keys(byName).length, loading, updatedAt: Date.now() } });
+        break;
+      }
+      case "paramsClear": this.set({ params: { ...blankParams, loading: !!msg.loading } }); break;
     }
   }
 
@@ -99,6 +114,7 @@ export class DaemonClient implements MissionApi {
   setBaud(baud: string): void { this.send({ name: "setBaud", baud }); }
   setMotorSpan(span: number): void { this.send({ name: "setMotorSpan", span: Math.round(span) }); }
   clearTrail(): void { this.send({ name: "clearTrail" }); }
+  refreshParams(): void { this.send({ name: "refreshParams" }); }
   connect(): void { this.send({ name: "connect" }); }
   disconnect(): void { this.send({ name: "disconnect" }); }
   startOutput(): void { this.send({ name: "startOutput" }); }

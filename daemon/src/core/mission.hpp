@@ -5,6 +5,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,11 @@ struct Position {
 };
 
 struct TrailPoint { double lat = 0, lon = 0; };
+
+/** One Pixhawk parameter; `type` is MAV_PARAM_TYPE (1 UINT8 … 9 REAL32). */
+struct Param { std::string name; float value = 0; int type = 0; int index = 0; };
+/** The parameter table lives outside MissionState: it is sent once and then as deltas, never in the 30 Hz broadcast. */
+struct ParamTable { std::map<std::string, Param> byName; int count = 0; bool loading = false; };
 
 /** Numbers behind the dashboard's primary flight display; the has* flags mirror the nulls in the JSON. */
 struct Pfd {
@@ -112,17 +118,22 @@ class Mission {
   void setMotorSpan(int span);
   void setBaud(int baud);
   void clearTrail();
+  /** Re-read the Pixhawk's parameter table (also runs automatically on each connect). */
+  void refreshParams();
   void logExternal(const std::string& text, LogKind kind = LogKind::Info) { log(text, kind); }
 
   // ---- state ----
   const MissionState& state() const { return s_; }
   const std::vector<LogLine>& logs() const { return logs_; }
+  const ParamTable& params() const { return params_; }
   const char* startBlockedReason() const;
 
   // Incremental notifications for the transport (so the browser gets log/trail deltas, not full copies).
   std::function<void(const LogLine&)> onLog;
   std::function<void(const TrailPoint&)> onTrailPoint;
   std::function<void()> onTrailCleared;
+  std::function<void(const std::vector<Param>& batch, int count, bool loading)> onParams;
+  std::function<void(bool loading)> onParamsCleared;
 
  private:
   void handleFrame(const mavlink_message_t& msg);
@@ -149,6 +160,12 @@ class Mission {
   uint32_t heartbeatAt_ = 0, lostSince_ = 0, connectedAt_ = 0;
   bool streamsRequested_ = false;
   void requestStreams();
+  ParamTable params_;
+  std::vector<Param> paramBatch_;
+  uint32_t lastParamAt_ = 0, nextParamFlushAt_ = 0;
+  int paramRetries_ = 0;
+  void flushParams(uint32_t now);
+  void paramWatchdog(uint32_t now);
   std::string lastMessage_ = "—";
   std::string seenErrors_;
   int gpsFix_ = 0, gpsSats_ = 0;

@@ -3,7 +3,7 @@
 // Keep this file free of browser or React code so it can be unit tested in Node.
 
 export const MSG = {
-  HEARTBEAT: 0, SYS_STATUS: 1, GPS_RAW_INT: 24, ATTITUDE: 30, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
+  HEARTBEAT: 0, SYS_STATUS: 1, PARAM_REQUEST_READ: 20, PARAM_REQUEST_LIST: 21, PARAM_VALUE: 22, GPS_RAW_INT: 24, ATTITUDE: 30, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
   RC_CHANNELS_OVERRIDE: 70, VFR_HUD: 74, COMMAND_LONG: 76, COMMAND_ACK: 77, STATUSTEXT: 253,
 } as const;
 
@@ -149,6 +149,15 @@ export function decodeAttitude(payload: Uint8Array): { rollDeg: number; pitchDeg
   return { rollDeg: v.getFloat32(4, true) * deg, pitchDeg: v.getFloat32(8, true) * deg, yawDeg: ((v.getFloat32(12, true) * deg) % 360 + 360) % 360, yawRateDps: v.getFloat32(24, true) * deg };
 }
 
+export type ParamValue = { name: string; value: number; type: number; count: number; index: number };
+/** One parameter from the Pixhawk (parameter protocol). ArduPilot sends integer types by value in the float. */
+export function decodeParamValue(payload: Uint8Array): ParamValue {
+  const v = view(payload, 25);
+  const bytes = new Uint8Array(v.buffer, 8, 16);
+  const end = bytes.indexOf(0);
+  return { value: v.getFloat32(0, true), count: v.getUint16(4, true), index: v.getUint16(6, true), name: new TextDecoder().decode(end < 0 ? bytes : bytes.subarray(0, end)), type: v.getUint8(24) };
+}
+
 export function decodeStatusText(payload: Uint8Array): { severity: number; text: string } {
   const v = view(payload, 51);
   const bytes = new Uint8Array(v.buffer, 1, 50);
@@ -167,6 +176,17 @@ export const build = {
     return Uint8Array.from([0, 0, 0, 0, 6, 8, 0, 4, 3]);
   },
 
+  /** Ask for every parameter; the Pixhawk answers with a stream of PARAM_VALUE. */
+  paramRequestList(targetSys: number, targetComp: number): Uint8Array {
+    return Uint8Array.from([targetSys, targetComp]);
+  },
+  /** Ask for one parameter by index (used to fill gaps after the list). */
+  paramRequestRead(targetSys: number, targetComp: number, index: number): Uint8Array {
+    const out = new Uint8Array(20);
+    new DataView(out.buffer).setInt16(0, index, true);
+    out[2] = targetSys; out[3] = targetComp;
+    return out;
+  },
   commandLong(targetSys: number, targetComp: number, command: number, params: number[] = []): Uint8Array {
     const payload = new Uint8Array(33);
     const v = new DataView(payload.buffer);

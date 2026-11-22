@@ -30,6 +30,10 @@ class SimVehicle {
   int left_ = 1500, right_ = 1500, rudder_ = 1500;
   double lat_ = 43.0766, lon_ = -89.4125, headingDeg_ = 90, speedMps_ = 0, turnRateDps_ = 0, accelMps2_ = 0, rollDeg_ = 0, pitchDeg_ = 0;   // Lake Mendota, Madison
   float voltage_ = 12.6f;
+  // Parameter protocol: a slice of the real boat's table, streamed a few per poll like ArduPilot does.
+  int paramStreamNext_ = -1;   // next index to stream, -1 when idle
+  bool droppedOnce_ = false;   // drop one PARAM_VALUE on the first list to exercise the gap retry
+  void emitParam(int index, std::vector<uint8_t>& out);
 };
 
 }  // namespace platform
