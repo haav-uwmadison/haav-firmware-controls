@@ -66,5 +66,5 @@ const noopSubscribe = () => () => undefined;
 /** Placeholder while probing so the page can render before a backend is chosen. */
 const idle: MissionApi = {
   getState: getInitial, subscribe: noopSubscribe, start() {}, dispose() {},
-  setBaud() {}, setMotorSpan() {}, clearTrail() {}, connect() {}, disconnect() {}, startOutput() {}, stopOutput() {}, arm() {}, disarm() {}, panic() {},
+  setBaud() {}, setMotorSpan() {}, clearTrail() {}, connect() {}, disconnect() {}, startOutput() {}, stopOutput() {}, arm() {}, disarm() {}, panic() {}, handleShortcut() {},
 };

@@ -8,6 +8,7 @@
 namespace boat {
 
 namespace {
+constexpr double PI = 3.14159265358979323846;
 constexpr uint32_t LINK_SETTLE_MS = 3000;          // how long to wait before calling a silent port "No data"
 constexpr uint32_t ACK_TIMEOUT_MS = 2000;
 constexpr uint32_t LAST_MESSAGE_REFRESH_MS = 3000;  // "Last msg" would flicker at frame rate otherwise
@@ -240,7 +241,7 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
   switch (msg.msgid) {
     case MAVLINK_MSG_ID_HEARTBEAT: msgName = "HEARTBEAT"; break; case MAVLINK_MSG_ID_SYS_STATUS: msgName = "SYS_STATUS"; break;
     case MAVLINK_MSG_ID_GPS_RAW_INT: msgName = "GPS_RAW_INT"; break; case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: msgName = "GLOBAL_POSITION_INT"; break;
-    case MAVLINK_MSG_ID_VFR_HUD: msgName = "VFR_HUD"; break; case MAVLINK_MSG_ID_COMMAND_ACK: msgName = "COMMAND_ACK"; break;
+    case MAVLINK_MSG_ID_ATTITUDE: msgName = "ATTITUDE"; break; case MAVLINK_MSG_ID_VFR_HUD: msgName = "VFR_HUD"; break; case MAVLINK_MSG_ID_COMMAND_ACK: msgName = "COMMAND_ACK"; break;
     case MAVLINK_MSG_ID_STATUSTEXT: msgName = "STATUSTEXT"; break; default: break;
   }
   lastMessage_ = (msgName ? std::string(msgName) : "MSG " + std::to_string(msg.msgid)) + " · " + std::to_string(msg.sysid) + "/" + std::to_string(msg.compid);
@@ -277,18 +278,29 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
       const double speedMps = std::hypot(p.vx, p.vy) / 100.0;
       s_.telemetry.speed = fmt("%.1f kn", speedMps * 1.94384);
       s_.telemetry.heading = p.hdg == 65535 ? "—" : fmti("%ld°", std::lround(p.hdg / 100.0) % 360);
+      s_.pfd.hasSpeed = true; s_.pfd.speedMps = speedMps;
+      // ATTITUDE's yaw is the better heading source (higher rate); keep the EKF heading only until it shows up.
+      if (!s_.pfd.hasAttitude && p.hdg != 65535) { s_.pfd.hasHeading = true; s_.pfd.headingDeg = p.hdg / 100.0; }
       if (p.lat == 0 && p.lon == 0) break;
       const double lat = p.lat / 1e7, lon = p.lon / 1e7;
       s_.hasPosition = true;
       s_.position = Position{lat, lon, p.hdg != 65535, p.hdg / 100.0, gpsFix_, gpsSats_, now};
       // Trail: keep a point every ~1 m or every 2 s.
-      const double movedM = haveTrail_ ? std::hypot((lat - lastTrail_.lat) * 111320.0, (lon - lastTrail_.lon) * 111320.0 * std::cos(lat * M_PI / 180.0)) : 1e9;
+      const double movedM = haveTrail_ ? std::hypot((lat - lastTrail_.lat) * 111320.0, (lon - lastTrail_.lon) * 111320.0 * std::cos(lat * PI / 180.0)) : 1e9;
       if (!haveTrail_ || movedM > 1.0 || now - lastTrailAt_ > 2000) {
         haveTrail_ = true; lastTrail_ = TrailPoint{lat, lon}; lastTrailAt_ = now;
         s_.trail.push_back(lastTrail_);
         if (s_.trail.size() > TRAIL_LIMIT) s_.trail.erase(s_.trail.begin(), s_.trail.begin() + (s_.trail.size() - TRAIL_LIMIT));
         if (onTrailPoint) onTrailPoint(lastTrail_);
       }
+      break;
+    }
+    case MAVLINK_MSG_ID_ATTITUDE: {
+      mavlink_attitude_t a; mavlink_msg_attitude_decode(&msg, &a);
+      const double deg = 180.0 / PI;
+      s_.pfd.hasAttitude = s_.pfd.hasHeading = true;
+      s_.pfd.rollDeg = a.roll * deg; s_.pfd.pitchDeg = a.pitch * deg; s_.pfd.yawRateDps = a.yawspeed * deg;
+      s_.pfd.headingDeg = std::fmod(std::fmod(a.yaw * deg, 360.0) + 360.0, 360.0);
       break;
     }
     case MAVLINK_MSG_ID_SYS_STATUS: {
@@ -368,7 +380,7 @@ void Mission::clearAckWait() { ackDeadline_ = 0; s_.armPending = ArmPending::Non
 void Mission::resetLinkState() {
   heartbeatAt_ = 0; lostSince_ = 0; lastMessage_ = "—"; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
   rxStatus_ = mavlink_status_t{};
-  s_.telemetry = Telemetry{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
+  s_.telemetry = Telemetry{}; s_.pfd = Pfd{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
   s_.hasPosition = false; s_.position = Position{};
 }
 

@@ -24,11 +24,11 @@ class SimVehicle {
   mavlink_message_t rx_{};
   mavlink_status_t rxStatus_{};
   std::vector<uint8_t> pending_;
-  uint32_t nextHeartbeat_ = 0, nextSysStatus_ = 0, nextGps_ = 0, nextPosition_ = 0, lastOverride_ = 0, lastStep_ = 0;
+  uint32_t nextHeartbeat_ = 0, nextSysStatus_ = 0, nextGps_ = 0, nextPosition_ = 0, nextAttitude_ = 0, lastOverride_ = 0, lastStep_ = 0;
   bool armed_ = false;
   uint32_t mode_ = 0;
   int left_ = 1500, right_ = 1500, rudder_ = 1500;
-  double lat_ = 43.0766, lon_ = -89.4125, headingDeg_ = 90, speedMps_ = 0;   // Lake Mendota, Madison
+  double lat_ = 43.0766, lon_ = -89.4125, headingDeg_ = 90, speedMps_ = 0, turnRateDps_ = 0, accelMps2_ = 0, rollDeg_ = 0, pitchDeg_ = 0;   // Lake Mendota, Madison
   float voltage_ = 12.6f;
 };
 

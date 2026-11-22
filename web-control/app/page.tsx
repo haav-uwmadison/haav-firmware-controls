@@ -3,13 +3,14 @@
 // View only. All boat logic lives in lib/mission-controller.ts; this file maps its state to panels
 // and forwards clicks and keys back to it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsolePanel } from "@/components/ConsolePanel";
 import { ControllerPanel } from "@/components/ControllerPanel";
 import { GpsMapPanel } from "@/components/GpsMap";
 import { LogPanel } from "@/components/LogPanel";
+import { PfdPanel } from "@/components/Pfd";
 import { StatusBar, type Readout, type Tone } from "@/components/StatusBar";
 import { controllerToCommand } from "@/lib/boat-control";
 import { bauds, type LinkPhase, type OutputPhase } from "@/lib/mission-controller";
@@ -40,9 +41,27 @@ export default function Home() {
   const { connected, connecting, telemetry, controller, sending, armPending, linkPhase, startBlockedReason } = state;
   const [followBoat, setFollowBoat] = useState(true);
 
-  // Esc is the panic key: stop output and disarm; disarm alone when idle.
+  // The status bar stays pinned while the page scrolls; the controller column sticks just below it.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barHeight, setBarHeight] = useState(88);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); mission.panic(); } };
+    const el = barRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setBarHeight(el.offsetHeight));
+    observer.observe(el); setBarHeight(el.offsetHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  // Keep keystroke handling in the controller; ignore shortcuts while typing in a control.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.repeat) return;
+      const key = event.key.toLowerCase();
+      if (!["escape", "a", "b", "l", "o"].includes(key)) return;
+      event.preventDefault(); mission.handleShortcut(key);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mission]);
@@ -57,21 +76,21 @@ export default function Home() {
     {
       label: "Armed", ...armedState, badge: true, live: true,
       action: telemetry.armed
-        ? { onClick: () => void mission.disarm(), hint: "click to disarm", disabled: !connected || !!armPending, title: "Disarm (Esc also disarms)" }
-        : { onClick: () => void mission.arm(), hint: "click to arm", disabled: !connected || !!armPending || telemetry.armed === null, title: "Set MANUAL mode and arm" },
+        ? { onClick: () => void mission.disarm(), hint: "disarm", shortcut: "B", disabled: !connected || !!armPending, title: "Disarm (B)" }
+        : { onClick: () => void mission.arm(), hint: "arm", shortcut: "A", disabled: !connected || !!armPending || telemetry.armed === null, title: "Set MANUAL mode and arm (A)" },
     },
     {
       label: "Output", ...outputReadout[state.outputPhase], live: true,
       action: sending
-        ? { onClick: () => void mission.stopOutput("stopped by user"), hint: "click to stop", title: "Stop control output (Esc also stops and disarms)" }
-        : { onClick: () => mission.startOutput(), hint: "click to start", disabled: !!startBlockedReason, title: startBlockedReason ?? "Start RC override at 20 Hz" },
+        ? { onClick: () => void mission.stopOutput("stopped by user"), hint: "stop", shortcut: "O", title: "Stop control output (O)" }
+        : { onClick: () => mission.startOutput(), hint: "start", shortcut: "O", disabled: !!startBlockedReason, title: startBlockedReason ?? "Start RC override at 20 Hz (O)" },
     },
     { label: "Mode", value: telemetry.mode },
     {
       label: "Link", ...linkReadout(linkPhase, state.lostSeconds), live: true,
       action: connected
-        ? { onClick: () => void mission.disconnect(), hint: "click to disconnect" }
-        : { onClick: () => void mission.connect(), hint: "click to connect", disabled: connecting, title: `Open the serial port at ${state.baud} baud` },
+        ? { onClick: () => void mission.disconnect(), hint: "disconnect", shortcut: "L" }
+        : { onClick: () => void mission.connect(), hint: "connect", shortcut: "L", disabled: connecting, title: `Open the serial port at ${state.baud} baud (L)` },
     },
     { label: "Controller", value: controller.connected ? "Connected" : state.controllerLost ? "Lost" : "—", tone: controller.connected ? "ok" : state.controllerLost ? "danger" : "idle" },
     { label: "Battery", value: telemetry.battery },
@@ -97,16 +116,19 @@ export default function Home() {
 
   return <TooltipProvider>
     <div className="p-6 text-sm text-muted-foreground md:hidden">Mission needs a desktop Chrome window at least 768px wide.</div>
-    <div className="hidden min-h-0 flex-col md:flex lg:h-screen lg:overflow-hidden">
-      <StatusBar primary={primary} secondary={secondary} actions={actions} />
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[300px_1fr] xl:grid-cols-[360px_1fr]">
-        <div className="order-2 min-h-0 lg:order-1"><ControllerPanel controller={controller} command={controllerToCommand(controller)} lost={state.controllerLost} /></div>
-        <main className="order-1 mx-0 flex w-full max-w-none min-h-0 flex-col gap-4 p-4 lg:order-2">
+    <div className="hidden min-h-screen flex-col md:flex" style={{ "--bar-h": `${barHeight}px` } as CSSProperties}>
+      <div ref={barRef} className="sticky top-0 z-[1100]"><StatusBar primary={primary} secondary={secondary} actions={actions} /></div>
+      <div className="grid flex-1 grid-cols-1 lg:grid-cols-[300px_1fr] xl:grid-cols-[360px_1fr]">
+        <div className="order-2 bg-panel lg:order-1">
+          <div className="lg:sticky lg:top-[var(--bar-h)] lg:h-[calc(100vh-var(--bar-h))]"><ControllerPanel controller={controller} command={controllerToCommand(controller)} lost={state.controllerLost} /></div>
+        </div>
+        <main className="order-1 mx-0 flex w-full max-w-none flex-col gap-4 p-4 lg:order-2">
           <ConsolePanel phase={state.outputPhase} pwm={state.pwm} overridesSent={state.overridesSent} heartbeatsSent={state.heartbeatsSent} banner={state.banner}
             motorSpan={state.motorSpan} onMotorSpanChange={span => mission.setMotorSpan(span)} format={format} />
-          <div className="grid min-h-[260px] flex-1 grid-cols-1 gap-4 xl:grid-cols-2">
-            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="min-h-[260px]" />
-            <LogPanel lines={state.logs} className="min-h-[220px]" />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+            <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="h-[440px]" />
+            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />
+            <LogPanel lines={state.logs} className="h-[440px] xl:col-span-2 2xl:col-span-1" />
           </div>
         </main>
       </div>

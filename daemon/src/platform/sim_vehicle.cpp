@@ -7,6 +7,7 @@
 namespace platform {
 
 namespace {
+constexpr double PI = 3.14159265358979323846;
 constexpr uint8_t SYS = 1, COMP = 1;
 void statusText(std::vector<uint8_t>& out, uint8_t severity, const char* text) {
   mavlink_message_t msg;
@@ -68,11 +69,18 @@ std::vector<uint8_t> SimVehicle::poll() {
   const bool driving = armed_ && now - lastOverride_ < 1000;
   const double l = driving ? (left_ - 1500) / 500.0 : 0, r = driving ? (right_ - 1500) / 500.0 : 0, rud = driving ? (rudder_ - 1500) / 500.0 : 0;
   const double targetSpeed = (l + r) / 2.0 * 2.5;   // 2.5 m/s at full throttle
+  const double prevSpeed = speedMps_;
   speedMps_ += (targetSpeed - speedMps_) * std::min(1.0, dt * 1.5);
-  headingDeg_ = std::fmod(headingDeg_ + ((r - l) * 40.0 + rud * speedMps_ * 25.0) * dt + 360.0, 360.0);
-  const double rad = headingDeg_ * M_PI / 180.0;
+  turnRateDps_ = (r - l) * 40.0 + rud * speedMps_ * 25.0;
+  headingDeg_ = std::fmod(headingDeg_ + turnRateDps_ * dt + 360.0, 360.0);
+  // Attitude: a little heel into turns, bow-up under acceleration, plus a gentle wave motion.
+  accelMps2_ = dt > 0 ? (speedMps_ - prevSpeed) / dt : 0;
+  const double wave = now / 1000.0;
+  rollDeg_ += ((turnRateDps_ * 0.25) + std::sin(wave * 1.3) * 2.0 - rollDeg_) * std::min(1.0, dt * 3.0);
+  pitchDeg_ += ((accelMps2_ * 4.0 + speedMps_ * 1.2) + std::cos(wave * 0.9) * 1.0 - pitchDeg_) * std::min(1.0, dt * 3.0);
+  const double rad = headingDeg_ * PI / 180.0;
   lat_ += speedMps_ * std::cos(rad) * dt / 111320.0;
-  lon_ += speedMps_ * std::sin(rad) * dt / (111320.0 * std::cos(lat_ * M_PI / 180.0));
+  lon_ += speedMps_ * std::sin(rad) * dt / (111320.0 * std::cos(lat_ * PI / 180.0));
   if (armed_) voltage_ = std::max(10.5f, voltage_ - static_cast<float>(dt) * 0.002f);
 
   if (now >= nextHeartbeat_) {
@@ -94,6 +102,14 @@ std::vector<uint8_t> SimVehicle::poll() {
     mavlink_message_t m;
     mavlink_msg_gps_raw_int_pack(SYS, COMP, &m, static_cast<uint64_t>(now) * 1000, 3, static_cast<int32_t>(lat_ * 1e7), static_cast<int32_t>(lon_ * 1e7), 259000,
                                  120, 180, static_cast<uint16_t>(speedMps_ * 100), static_cast<uint16_t>(headingDeg_ * 100), 9, 0, 0, 0, 0, 0, 0);
+    emit(m, out);
+  }
+  if (now >= nextAttitude_) {
+    nextAttitude_ = now + 100;
+    mavlink_message_t m;
+    const float toRad = static_cast<float>(PI / 180.0);
+    mavlink_msg_attitude_pack(SYS, COMP, &m, now, static_cast<float>(rollDeg_) * toRad, static_cast<float>(pitchDeg_) * toRad,
+                              static_cast<float>(headingDeg_) * toRad, 0, 0, static_cast<float>(turnRateDps_) * toRad);
     emit(m, out);
   }
   if (now >= nextPosition_) {

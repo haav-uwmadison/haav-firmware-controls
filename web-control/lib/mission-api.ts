@@ -21,4 +21,6 @@ export interface MissionApi {
   arm(): Promise<void> | void;
   disarm(): Promise<void> | void;
   panic(): void;
+  /** Keyboard shortcut from the page: escape, a, b, l or o. */
+  handleShortcut(key: string): void;
 }
