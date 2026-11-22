@@ -11,7 +11,7 @@ export const messageNames: Record<number, string> = Object.fromEntries(Object.en
 
 import { crcExtra } from "./mavlink-crc";
 
-export const MAV_CMD = { DO_SET_MODE: 176, COMPONENT_ARM_DISARM: 400 } as const;
+export const MAV_CMD = { DO_SET_MODE: 176, COMPONENT_ARM_DISARM: 400, SET_MESSAGE_INTERVAL: 511 } as const;
 export const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1;
 export const MAV_MODE_FLAG_SAFETY_ARMED = 128;
 export const ROVER_MODE_MANUAL = 0;

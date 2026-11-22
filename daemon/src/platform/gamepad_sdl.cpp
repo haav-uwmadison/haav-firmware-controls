@@ -47,12 +47,27 @@ boat::Controller Gamepad::sample() {
   }
   if (!pad_) return c;
   auto* pad = static_cast<SDL_GameController*>(pad_);
+  auto* joystick = SDL_GameControllerGetJoystick(pad);
   auto axis = [pad](SDL_GameControllerAxis a) { return SDL_GameControllerGetAxis(pad, a) / 32767.0f; };
   c.connected = SDL_GameControllerGetAttached(pad) == SDL_TRUE;
   c.lx = axis(SDL_CONTROLLER_AXIS_LEFTX);
   c.ly = -axis(SDL_CONTROLLER_AXIS_LEFTY);   // SDL reads up as negative; the boat wants forward = +1
   c.rx = axis(SDL_CONTROLLER_AXIS_RIGHTX);
   c.ry = -axis(SDL_CONTROLLER_AXIS_RIGHTY);
+  // Some Windows SDL/HID mappings expose Xbox triggers through GameController
+  // but leave the stick mappings empty. Fall back to SDL's standard raw Xbox
+  // joystick axis order (left X/Y, right X/Y) only when all mapped stick axes
+  // are centered; working GameController mappings always take precedence.
+  if (joystick && c.lx == 0 && c.ly == 0 && c.rx == 0 && c.ry == 0 && SDL_JoystickNumAxes(joystick) >= 4) {
+    auto rawAxis = [joystick](int index) { return SDL_JoystickGetAxis(joystick, index) / 32767.0f; };
+    const float lx = rawAxis(0), ly = rawAxis(1), rx = rawAxis(2), ry = rawAxis(3);
+    if (lx != 0 || ly != 0 || rx != 0 || ry != 0) {
+      c.lx = lx;
+      c.ly = -ly;
+      c.rx = rx;
+      c.ry = -ry;
+    }
+  }
   c.lt = axis(SDL_CONTROLLER_AXIS_TRIGGERLEFT);
   c.rt = axis(SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
   c.a = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A) != 0;

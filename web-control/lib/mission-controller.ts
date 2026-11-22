@@ -64,6 +64,8 @@ const STORAGE_KEY_MOTOR_SPAN = "mission.motorSpan";
 
 export const neutralPwm: BoatPwm = { left: 1500, right: 1500, rudder: 1500 };
 export const bauds = ["57600", "115200", "921600"];
+/** Message rates to ask the Pixhawk for once its heartbeat arrives: [message id, Hz]. */
+export const streamRates: [number, number][] = [[MSG.ATTITUDE, 10], [MSG.GLOBAL_POSITION_INT, 5], [MSG.GPS_RAW_INT, 2], [MSG.SYS_STATUS, 2]];
 export const blankPfd: Pfd = { rollDeg: null, pitchDeg: null, yawRateDps: null, speedMps: null, headingDeg: null };
 const blankTelemetry: Telemetry = { vehicle: "—", mode: "—", armed: null, gps: "—", battery: "—", speed: "—", heading: "—", last: "—" };
 const modeNames: Record<number, string> = { 0: "MANUAL", 1: "ACRO", 2: "STEERING", 3: "HOLD", 4: "LOITER", 5: "FOLLOW", 6: "GUIDED", 10: "AUTO", 11: "RTL", 12: "SMART_RTL", 15: "GUIDED_NOGPS", 16: "INITIALISING" };
@@ -89,6 +91,7 @@ export class MissionController {
   private readonly encoder = new MavlinkEncoder(GCS_SYSTEM, GCS_COMPONENT);
   private heartbeatAt = 0;
   private lostSince = 0;
+  private streamsRequested = false;
   private connectedAt = 0;
   private lastMessage = "—";
   private seenErrors = new Set<string>();
@@ -324,6 +327,7 @@ export class MissionController {
       const hb = decodeHeartbeat(frame.payload);
       if (this.lostSince) { this.log(`Heartbeat back after ${Math.round((Date.now() - this.lostSince) / 1000)} s`); this.lostSince = 0; }
       this.heartbeatAt = Date.now();
+      if (!this.streamsRequested) { this.streamsRequested = true; void this.requestStreams(); }
       this.set({ telemetry: { ...t, vehicle: vehicleTypes[hb.type] ?? `MAV_TYPE ${hb.type}`, mode: modeNames[hb.customMode] ?? `Custom ${hb.customMode}`, armed: hb.armed } });
     } else if (frame.id === MSG.GPS_RAW_INT) {
       const gps = decodeGpsRawInt(frame.payload);
@@ -362,7 +366,8 @@ export class MissionController {
       if (text) this.log(`Pixhawk: ${text}`, severity <= 3 ? "error" : severity === 4 ? "warn" : "pixhawk");
     } else if (frame.id === MSG.COMMAND_ACK) {
       const ack = decodeCommandAck(frame.payload);
-      const name = ack.command === MAV_CMD.COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command === MAV_CMD.DO_SET_MODE ? "set mode" : `command ${ack.command}`;
+      if (ack.command === MAV_CMD.SET_MESSAGE_INTERVAL && ack.result === 0) return;   // four of these per connect; only failures are interesting
+      const name = ack.command === MAV_CMD.COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command === MAV_CMD.DO_SET_MODE ? "set mode" : ack.command === MAV_CMD.SET_MESSAGE_INTERVAL ? "message interval" : `command ${ack.command}`;
       this.log(`ACK ${name}: ${ackResults[ack.result] ?? ack.result}`, ack.result === 0 ? "ack" : "error");
       if (ack.command === MAV_CMD.COMPONENT_ARM_DISARM) this.clearAckWait();
     }
@@ -406,10 +411,21 @@ export class MissionController {
     this.timers.ack = setTimeout(() => { this.set({ armPending: false }); this.log(`No ACK for ${what} within ${ACK_TIMEOUT_MS / 1000} s`, "warn"); }, ACK_TIMEOUT_MS);
   }
 
+  /**
+   * ArduPilot only streams what the ground station asks for, and the telemetry-port defaults are a
+   * few hertz at best. Ask for the messages behind the PFD and the map at useful rates.
+   */
+  private async requestStreams(): Promise<void> {
+    for (const [id, hz] of streamRates) {
+      await this.send(MSG.COMMAND_LONG, build.commandLong(TARGET_SYSTEM, TARGET_COMPONENT, MAV_CMD.SET_MESSAGE_INTERVAL, [id, 1_000_000 / hz]));
+    }
+    this.log(`Requested ${streamRates.map(([id, hz]) => `${messageNames[id]} ${hz} Hz`).join(", ")}`);
+  }
+
   private clearAckWait(): void { clearTimeout(this.timers.ack); if (this.state.armPending) this.set({ armPending: false }); }
 
   private resetLinkState(): void {
-    this.heartbeatAt = 0; this.lostSince = 0; this.lastMessage = "—"; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
+    this.heartbeatAt = 0; this.lostSince = 0; this.streamsRequested = false; this.lastMessage = "—"; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
     this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd });
   }
 }
