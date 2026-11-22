@@ -9,6 +9,10 @@ namespace platform {
 Gamepad::Gamepad() {
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
+  // Windows only: Xbox sticks and buttons arrive as WM_INPUT raw-input messages, which SDL only
+  // dispatches from the video subsystem's event pump. The daemon has no window, so without its own
+  // joystick thread those messages are never read and only the XInput-polled triggers move.
+  SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
   if (SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) != 0) {
     std::fprintf(stderr, "gamepad: SDL_Init failed: %s\n", SDL_GetError());
     return;
