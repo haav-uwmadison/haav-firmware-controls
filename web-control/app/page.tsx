@@ -36,7 +36,7 @@ function linkReadout(phase: LinkPhase, lostSeconds: number): { value: string; to
 }
 
 export default function Home() {
-  const { mission, state } = useMission();
+  const { mission, state, backend, daemonVersion } = useMission();
   const { connected, connecting, telemetry, controller, sending, armPending, linkPhase, startBlockedReason } = state;
   const [followBoat, setFollowBoat] = useState(true);
 
@@ -86,6 +86,7 @@ export default function Home() {
     { label: "Read errors", value: String(state.recovered), tone: state.recovered ? "warn" : undefined },
     { label: "Bad CRC", value: String(state.badCrc), tone: state.badCrc ? "warn" : undefined },
     { label: "Port", value: connected ? state.portLabel : "—" },
+    { label: "Backend", value: backend === "daemon" ? `mission_daemon ${daemonVersion}`.trim() : backend === "browser" ? "in-browser (Web Serial)" : "looking for daemon…", tone: backend === "daemon" ? "ok" : undefined },
   ];
 
   const actions = connected ? null

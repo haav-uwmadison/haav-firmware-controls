@@ -59,6 +59,17 @@ npm run deploy:pages
 
 This builds into a separate `.next-export` directory so it does not interfere with `npm run dev`, then uploads that directory to the `main` production branch. Cloudflare Pages project: `haav-mission-control`; custom hostname: `mission.haav.build`.
 
+## Backends
+
+The dashboard drives the boat one of two ways and picks automatically on load:
+
+- **mission_daemon** (preferred): the C++ program in `../daemon` owns the controller and the serial port and serves
+  `ws://127.0.0.1:8765`. When it is running, the Backend readout turns green and the page is a thin client.
+  See `../daemon/README.md` for the one-command build and run on macOS, Windows and Linux.
+- **In-browser**: without the daemon the page falls back to Web Serial and the Gamepad API (Chrome/Edge only).
+
+Both expose the same `MissionApi` (`lib/mission-api.ts`); the page never knows which one it is talking to.
+
 ## Dashboard UI (`/`)
 
 Tailwind v4 + shadcn/ui (`components/ui`, generated with `npx shadcn add ...`), IBM Plex Sans/Mono via
