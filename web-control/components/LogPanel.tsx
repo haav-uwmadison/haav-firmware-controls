@@ -38,12 +38,10 @@ export function LogPanel({ lines, className }: { lines: LogLine[]; className?: s
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  const lastVisibleId = visible[visible.length - 1]?.id ?? 0;
-
   useEffect(() => {
     const el = viewport();
     if (el && atBottom) el.scrollTop = el.scrollHeight;
-  }, [lastVisibleId, visible.length, filter, atBottom]);
+  }, [visible.length, filter, atBottom]);
 
   const jump = () => { const el = viewport(); if (el) { el.scrollTop = el.scrollHeight; setAtBottom(true); } };
 

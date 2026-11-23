@@ -2,7 +2,7 @@
 
 Production UI: <https://mission.haav.build>
 
-Mission Control is a Next.js static website. The main dashboard (`/`) automatically connects to the C++ `mission_daemon` on `ws://127.0.0.1:8765` when running (preferred, so Chrome background-tab throttling cannot interrupt the MAVLink loop), and falls back to in-browser Web Serial + Gamepad API otherwise. Legacy direct Web Serial (`/direct`) and Python bridge (`/agent`) interfaces are also available; use only one page/process to control the Pixhawk at a time because the serial port is exclusive.
+Mission Control is a Next.js static website. The current main page (`/`) is the direct Web Serial controller. The background-agent interface is at `/agent`; it connects to a laptop helper that owns the Xbox controller and Pixhawk serial connection so Chrome background-tab throttling cannot interrupt the MAVLink control loop. Use only one page/process to control the Pixhawk at a time; the agent needs exclusive ownership of its serial port.
 
 ```text
 Xbox --Bluetooth--> laptop agent --MAVLink/USB UART--> Pixhawk 6C / ArduPilot --> thrusters + rudder

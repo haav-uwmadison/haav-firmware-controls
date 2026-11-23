@@ -42,7 +42,7 @@ export class SerialLink {
     this.readTask = this.readLoop(port).catch(async (error: unknown) => {
       if (!this.active) return;
       const message = error instanceof Error ? error.message : String(error);
-      await this.shutdown(true);
+      await this.shutdown();
       this.events.closed(message);
     });
   }
@@ -58,11 +58,11 @@ export class SerialLink {
     await this.writer.write(bytes);
   }
 
-  private async shutdown(fromReadLoop = false): Promise<void> {
+  private async shutdown(): Promise<void> {
     this.active = false;
     try { await this.reader?.cancel(); } catch { /* stream already closed */ }
     try { this.writer?.releaseLock(); } catch { /* lock already gone */ }
-    if (!fromReadLoop) await this.readTask?.catch(() => undefined);
+    await this.readTask?.catch(() => undefined);
     try { await this.port?.close(); } catch (error) { this.events.log(`Close: ${String(error)}`); }
     this.port = null; this.reader = null; this.writer = null; this.readTask = null;
   }
@@ -75,10 +75,7 @@ export class SerialLink {
       try {
         while (this.active) {
           const { value, done } = await reader.read();
-          if (done) {
-            if (this.active) throw new Error("Serial port closed unexpectedly");
-            return;
-          }
+          if (done) return;
           if (value) this.events.data(value);
         }
       } catch (error) {

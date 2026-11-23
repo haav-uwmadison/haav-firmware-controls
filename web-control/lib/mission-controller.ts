@@ -165,12 +165,11 @@ export class MissionController {
     this.unsubscribeInput?.(); this.unsubscribeInput = null;
     for (const key of Object.keys(this.timers) as (keyof typeof this.timers)[]) { clearInterval(this.timers[key]); clearTimeout(this.timers[key]); }
     this.timers = {};
-    clearTimeout(this.paramFlush); this.paramFlush = undefined;
     void this.link?.disconnect();
   }
 
   // ---- public commands -------------------------------------------------------------------------
-  setBaud(baud: string): void { if (!this.state.connected && !this.state.connecting) this.set({ baud }); }
+  setBaud(baud: string): void { if (!this.state.connected) this.set({ baud }); }
 
   /** Max PWM deviation from neutral for the motors, in µs. Applies to the next loop tick. */
   setMotorSpan(span: number): void {
@@ -292,8 +291,6 @@ export class MissionController {
     if (this.state.sending) {
       clearInterval(this.timers.loop); this.timers.loop = undefined;
       this.set({ sending: false, pwm: neutralPwm, outputPhase: "stopped" });
-      clearTimeout(this.timers.stopped);
-      this.timers.stopped = setTimeout(() => { if (this.state.outputPhase === "stopped") this.set({ outputPhase: "idle" }); }, STOPPED_BADGE_MS);
       this.log("Control output stopped for disarm", "warn");
     }
     try {
@@ -361,7 +358,6 @@ export class MissionController {
 
   // ---- input -------------------------------------------------------------------------------------
   private onInput(c: ControllerState): void {
-    if (!c.connected && !this.state.controller.connected) return;
     const pressedA = c.a && !this.prevButtons.a, pressedB = c.b && !this.prevButtons.b;
     this.prevButtons = { a: c.a, b: c.b };
     this.set({ controller: c, controllerLost: c.connected ? false : this.state.controllerLost });
@@ -477,13 +473,8 @@ export class MissionController {
     if (!this.state.connected) return;
     this.paramBuffer.clear(); this.paramCount = 0; this.paramRetries = 0; this.lastParamAt = Date.now();
     this.set({ params: { ...blankParams, loading: true } });
-    try {
-      await this.send(MSG.PARAM_REQUEST_LIST, build.paramRequestList(TARGET_SYSTEM, TARGET_COMPONENT));
-      this.log("Requested the parameter list");
-    } catch (error) {
-      this.set({ params: { ...this.state.params, loading: false } });
-      this.log(`Parameter request failed: ${String(error)}`, "error");
-    }
+    await this.send(MSG.PARAM_REQUEST_LIST, build.paramRequestList(TARGET_SYSTEM, TARGET_COMPONENT));
+    this.log("Requested the parameter list");
   }
 
   private flushParams(): void {
@@ -497,28 +488,20 @@ export class MissionController {
     this.set({ params: { byName, count, received, loading: !done, updatedAt: Date.now() } });
   }
 
-  /** The list stream drops frames on a radio link; retry the list if nothing arrived, or ask for gaps by index. */
+  /** The list stream drops frames on a radio link; ask for the gaps one index at a time. */
   private async paramWatchdog(now: number): Promise<void> {
     const t = this.state.params;
-    if (!t.loading || now - this.lastParamAt < PARAM_GAP_MS) return;
+    if (!t.loading || !t.count || now - this.lastParamAt < PARAM_GAP_MS) return;
     if (this.paramRetries >= PARAM_RETRY_LIMIT) {
-      this.log(t.count === 0 ? "Parameters never arrived; press Refresh to try again" : `${t.count - t.received} parameters never arrived; press Refresh to try again`, "warn");
+      this.log(`${t.count - t.received} parameters never arrived; press Refresh to try again`, "warn");
       this.set({ params: { ...t, loading: false } });
       return;
     }
+    const have = new Set(Object.values(t.byName).map(p => p.index));
+    const missing: number[] = [];
+    for (let i = 0; i < t.count && missing.length < PARAM_RETRY_BATCH; i++) if (!have.has(i)) missing.push(i);
     this.paramRetries++; this.lastParamAt = now;
-    try {
-      if (t.count === 0) {
-        await this.send(MSG.PARAM_REQUEST_LIST, build.paramRequestList(TARGET_SYSTEM, TARGET_COMPONENT));
-        return;
-      }
-      const have = new Set(Object.values(t.byName).map(p => p.index));
-      const missing: number[] = [];
-      for (let i = 0; i < t.count && missing.length < PARAM_RETRY_BATCH; i++) if (!have.has(i)) missing.push(i);
-      for (const index of missing) await this.send(MSG.PARAM_REQUEST_READ, build.paramRequestRead(TARGET_SYSTEM, TARGET_COMPONENT, index));
-    } catch {
-      // Link closed or write failed; the link closed handler will clean up.
-    }
+    for (const index of missing) await this.send(MSG.PARAM_REQUEST_READ, build.paramRequestRead(TARGET_SYSTEM, TARGET_COMPONENT, index));
   }
 
   /**
@@ -526,21 +509,17 @@ export class MissionController {
    * few hertz at best. Ask for the messages behind the PFD and the map at useful rates.
    */
   private async requestStreams(): Promise<void> {
-    try {
-      for (const [id, hz] of streamRates) {
-        await this.send(MSG.COMMAND_LONG, build.commandLong(TARGET_SYSTEM, TARGET_COMPONENT, MAV_CMD.SET_MESSAGE_INTERVAL, [id, 1_000_000 / hz]));
-      }
-      this.log(`Requested ${streamRates.map(([id, hz]) => `${messageNames[id]} ${hz} Hz`).join(", ")}`);
-    } catch (error) {
-      this.log(`Stream request failed: ${String(error)}`, "error");
+    for (const [id, hz] of streamRates) {
+      await this.send(MSG.COMMAND_LONG, build.commandLong(TARGET_SYSTEM, TARGET_COMPONENT, MAV_CMD.SET_MESSAGE_INTERVAL, [id, 1_000_000 / hz]));
     }
+    this.log(`Requested ${streamRates.map(([id, hz]) => `${messageNames[id]} ${hz} Hz`).join(", ")}`);
   }
 
   private clearAckWait(): void { clearTimeout(this.timers.ack); if (this.state.armPending) this.set({ armPending: false }); }
 
   private resetLinkState(): void {
     this.heartbeatAt = 0; this.lostSince = 0; this.streamsRequested = false; this.lastMessage = "—";
-    clearTimeout(this.paramFlush); this.paramFlush = undefined; this.paramBuffer.clear(); this.paramCount = 0; this.paramRetries = 0; this.lastParamAt = 0; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
+    clearTimeout(this.paramFlush); this.paramFlush = undefined; this.paramBuffer.clear(); this.paramCount = 0; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
     this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd, params: blankParams, lastAck: null });
   }
 }

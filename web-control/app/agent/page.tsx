@@ -30,39 +30,23 @@ export default function BackgroundAgentPage() {
   const log = (line: string) => setLogs(old => [`${new Date().toLocaleTimeString()}  ${line}`, ...old].slice(0, 40));
   const connect = () => {
     if (!token.trim()) { log("Paste the token printed in the agent terminal first."); return; }
-    socket.current?.close();
     localStorage.setItem("haav-local-agent-token", token.trim());
     setMessage("Connecting to laptop agent…");
     const ws = new WebSocket("ws://127.0.0.1:8765");
     socket.current = ws;
-    ws.onopen = () => { if (socket.current === ws) ws.send(JSON.stringify({ token: token.trim() })); };
+    ws.onopen = () => ws.send(JSON.stringify({ token: token.trim() }));
     ws.onmessage = event => {
-      if (socket.current !== ws) return;
-      let data: Bridge & { type?: string; action?: string; message?: string };
-      try { data = JSON.parse(event.data); } catch { return; }
-      if (data.type === "error") { log(data.message ?? "Agent error"); return; }
+      const data = JSON.parse(event.data);
+      if (data.type === "error") { log(data.message); return; }
       setBridge(data);
       setConnected(true);
       setMessage(data.connected ? "Pixhawk + laptop agent connected" : "Laptop agent connected; waiting for Pixhawk");
       if (data.type === "ack") log(`Agent accepted: ${data.action}`);
     };
-    ws.onerror = () => {
-      if (socket.current !== ws) return;
-      setConnected(false); setMessage("Cannot reach laptop agent"); log("Could not reach ws://127.0.0.1:8765. Check the terminal agent and browser local-network permission.");
-    };
-    ws.onclose = () => {
-      if (socket.current !== ws) return;
-      setConnected(false); setBridge(blank); setMessage("Local laptop agent disconnected");
-    };
+    ws.onerror = () => { setConnected(false); setMessage("Cannot reach laptop agent"); log("Could not reach ws://127.0.0.1:8765. Check the terminal agent and browser local-network permission."); };
+    ws.onclose = () => { setConnected(false); setBridge(blank); setMessage("Local laptop agent disconnected"); };
   };
-  const disconnect = () => {
-    const ws = socket.current;
-    socket.current = null;
-    ws?.close();
-    setConnected(false);
-    setBridge(blank);
-    setMessage("Local laptop agent disconnected");
-  };
+  const disconnect = () => { socket.current?.close(); socket.current = null; };
   const send = (action: string) => {
     if (!socket.current || socket.current.readyState !== WebSocket.OPEN) { log("Connect to the laptop agent first."); return; }
     socket.current.send(JSON.stringify({ action }));

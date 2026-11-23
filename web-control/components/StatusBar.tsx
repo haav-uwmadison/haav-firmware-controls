@@ -28,21 +28,21 @@ export function StatusBar({ primary, secondary, actions }: Props) {
       <div className="flex items-center border-r border-border px-4 text-[15px] font-semibold">Mission</div>
       <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {primary.map(item => {
-          const valueNode = item.badge
-            ? <Badge className={cn("mt-0.5 w-fit text-xs font-bold tracking-[0.06em]", toneBadge[item.tone ?? "idle"])} role={item.live ? "status" : undefined} aria-live={item.live ? "polite" : undefined}>{item.value}</Badge>
-            : <span className={cn("tabular truncate text-xl font-semibold leading-tight", toneText[item.tone ?? "neutral"])} role={item.live ? "status" : undefined} aria-live={item.live ? "polite" : undefined}>{item.value}</span>;
           const body = <>
             <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
               {item.label}{item.action && !item.action.disabled && <span className="text-live/80"> · {item.action.hint}</span>}
               {item.action?.shortcut && <kbd className="rounded border border-border bg-panel-2 px-1 py-0.5 font-mono text-[9px] leading-none text-muted-foreground">{item.action.shortcut}</kbd>}
             </span>
-            {valueNode}
+            {item.badge
+              ? <Badge className={cn("mt-0.5 w-fit text-xs font-bold tracking-[0.06em]", toneBadge[item.tone ?? "idle"])}>{item.value}</Badge>
+              : <span className={cn("tabular truncate text-xl font-semibold leading-tight", toneText[item.tone ?? "neutral"])}>{item.value}</span>}
           </>;
           const slot = "flex min-w-0 flex-col justify-center border-r border-border px-4 text-left";
           return item.action
             ? <button key={item.label} type="button" onClick={item.action.onClick} disabled={item.action.disabled} title={item.action.title ?? item.action.hint}
-                className={cn(slot, "cursor-pointer transition-colors hover:bg-panel-2 focus-visible:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent")}>{body}</button>
-            : <div key={item.label} className={slot}>{body}</div>;
+                className={cn(slot, "cursor-pointer transition-colors hover:bg-panel-2 focus-visible:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent")}
+                role={item.live ? "status" : undefined} aria-live={item.live ? "polite" : undefined}>{body}</button>
+            : <div key={item.label} className={slot} role={item.live ? "status" : undefined} aria-live={item.live ? "polite" : undefined}>{body}</div>;
         })}
       </div>
       <div className="flex shrink-0 items-center gap-2 px-4">

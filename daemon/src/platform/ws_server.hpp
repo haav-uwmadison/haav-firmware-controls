@@ -4,22 +4,19 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <vector>
 
-namespace ix { class WebSocket; class WebSocketServer; }
+namespace ix { class WebSocketServer; }
 
 namespace platform {
 
 class WsServer {
  public:
-  /** `hello` is called on the main thread (via flushHellos) for each new connection. */
+  /** `hello` is called on each new connection and must return the full-state message to send first. */
   WsServer(int port, std::function<std::string()> hello);
   ~WsServer();
   bool start(std::string& error);
-  /** Sends the initial hello payload to newly connected clients; call from the main loop. */
-  void flushHellos();
   void broadcast(const std::string& text);
   /** Takes every inbound message received since the last call. */
   std::vector<std::string> takeInbound();
@@ -32,8 +29,6 @@ class WsServer {
   std::unique_ptr<ix::WebSocketServer> server_;
   mutable std::mutex mutex_;
   std::vector<std::string> inbound_;
-  std::vector<std::weak_ptr<ix::WebSocket>> pendingHellos_;
-  std::set<std::weak_ptr<ix::WebSocket>, std::owner_less<std::weak_ptr<ix::WebSocket>>> readyClients_;
 };
 
 }  // namespace platform

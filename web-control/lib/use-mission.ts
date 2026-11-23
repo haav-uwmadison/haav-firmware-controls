@@ -31,9 +31,8 @@ export function useMission(): { mission: MissionApi; state: MissionState; backen
       // keep looking for the daemon while nothing is connected in the browser
       const reprobe = async () => {
         if (cancelled) return;
-        const canSwitch = () => !cancelled && !controller.getState().connected && !controller.getState().connecting;
-        if (canSwitch() && await probeDaemon(800) && canSwitch()) { controller.dispose(); attachDaemon(); return; }
-        if (!cancelled) timer = window.setTimeout(reprobe, REPROBE_MS);
+        if (!controller.getState().connected && !controller.getState().connecting && await probeDaemon(800)) { controller.dispose(); attachDaemon(); return; }
+        timer = window.setTimeout(reprobe, REPROBE_MS);
       };
       timer = window.setTimeout(reprobe, REPROBE_MS);
     };

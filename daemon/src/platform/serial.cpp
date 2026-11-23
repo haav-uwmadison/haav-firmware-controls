@@ -164,7 +164,6 @@ bool SerialPort::write(const uint8_t* data, size_t len) {
   while (done < len) {
     const ssize_t n = ::write(fd_, data + done, len - done);
     if (n < 0) {
-      if (errno == EINTR) continue;
       if ((errno == EAGAIN || errno == EWOULDBLOCK) && ++spins < 200) { usleep(500); continue; }
       close(); return false;
     }

@@ -3,7 +3,7 @@
 // View only. All boat logic lives in lib/mission-controller.ts; this file maps its state to panels
 // and forwards clicks and keys back to it.
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsolePanel } from "@/components/ConsolePanel";
@@ -42,8 +42,6 @@ export default function Home() {
   const { mission, state, backend, daemonVersion } = useMission();
   const { connected, connecting, telemetry, controller, sending, armPending, linkPhase, startBlockedReason } = state;
   const [followBoat, setFollowBoat] = useState(true);
-  const handleRefreshParams = useCallback(() => { void mission.refreshParams(); }, [mission]);
-  const handleClearTrail = useCallback(() => { mission.clearTrail(); }, [mission]);
 
   // The status bar stays pinned while the page scrolls; the controller column sticks just below it.
   const barRef = useRef<HTMLDivElement>(null);
@@ -132,12 +130,12 @@ export default function Home() {
             motorReverse={state.motorReverse} onMotorReverseChange={(motor, reverse) => mission.setMotorReverse(motor, reverse)} format={format} />
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
             <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="h-[440px]" />
-            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={handleClearTrail} className="h-[440px]" />
+            <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />
             <LogPanel lines={state.logs} className="h-[440px] xl:col-span-2 2xl:col-span-1" />
           </div>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
             <EscCalibrationPanel mission={mission} state={state} className="h-[640px]" />
-            <ParametersPanel params={state.params} connected={connected} vehicle={telemetry.vehicle} onRefresh={handleRefreshParams} className="h-[640px]" />
+            <ParametersPanel params={state.params} connected={connected} vehicle={telemetry.vehicle} onRefresh={() => void mission.refreshParams()} className="h-[640px]" />
           </div>
         </main>
       </div>

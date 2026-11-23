@@ -61,28 +61,18 @@ export function escCalNeedsRestore(state: MissionState, originals: Record<number
   return Object.keys(originals).map(Number).filter(ch => state.params.byName[`SERVO${ch}_FUNCTION`]?.value === SERVO_FUNCTION_DISABLED);
 }
 
-export const initialEscCalState: EscCalState = { step: "idle", message: "", outputs: [], originals: {}, busy: false };
-
 export class EscCalibration {
   private state: EscCalState;
   private readonly listeners = new Set<() => void>();
   private guard: ReturnType<typeof setInterval> | undefined;
-  private disposed = false;
 
   constructor(private readonly api: MissionApi, private readonly storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null = typeof window === "undefined" ? null : window.localStorage) {
-    this.state = { ...initialEscCalState };
-  }
-
-  /** Load any unfinished originals persisted before a page reload. Call from a client effect to avoid SSR hydration mismatches. */
-  hydrate(): void {
-    this.disposed = false;
-    const originals = this.loadOriginals();
-    if (Object.keys(originals).length > 0 && Object.keys(this.state.originals).length === 0) this.set({ originals });
+    this.state = { step: "idle", message: "", outputs: [], originals: this.loadOriginals(), busy: false };
   }
 
   getState = (): EscCalState => this.state;
-  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
-  dispose(): void { this.disposed = true; this.stopGuard(); }
+  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+  dispose(): void { this.stopGuard(); }
 
   /** Take the motor outputs off their functions and hold them at max. */
   async start(): Promise<void> {
@@ -149,18 +139,16 @@ export class EscCalibration {
   // ---- steps -------------------------------------------------------------------------------------
   private async restoreFunctions(): Promise<void> {
     const entries = Object.entries(this.state.originals);
-    for (const [channel, func] of entries) await this.setParamChecked(`SERVO${channel}_FUNCTION`, func, true);
+    for (const [channel, func] of entries) await this.setParamChecked(`SERVO${channel}_FUNCTION`, func);
     this.saveOriginals({});
-    if (!this.disposed) this.set({ originals: {} });
+    this.set({ originals: {} });
   }
 
   /** PARAM_SET, then wait for the echoed PARAM_VALUE to show the new value. */
-  private async setParamChecked(name: string, value: number, allowWhenDisposed = false): Promise<void> {
+  private async setParamChecked(name: string, value: number): Promise<void> {
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      if (this.disposed && !allowWhenDisposed) throw new EscCalibrationError("Calibration cancelled");
       await this.api.setParam(name, value);
-      if (await this.waitFor(s => s.params.byName[name]?.value === value, PARAM_ECHO_MS, allowWhenDisposed)) return;
-      if (this.disposed && !allowWhenDisposed) throw new EscCalibrationError("Calibration cancelled");
+      if (await this.waitFor(s => s.params.byName[name]?.value === value, PARAM_ECHO_MS)) return;
     }
     throw new EscCalibrationError(`The Pixhawk did not confirm ${name} = ${value}`);
   }
@@ -168,11 +156,9 @@ export class EscCalibration {
   /** DO_SET_SERVO, then wait for its ACK. */
   private async setServoChecked(channel: number, pwm: number): Promise<void> {
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
-      if (this.disposed) throw new EscCalibrationError("Calibration cancelled");
       const before = this.api.getState().lastAck?.seq ?? 0;
       await this.api.sendCommand(MAV_CMD.DO_SET_SERVO, [channel, pwm]);
       const acked = await this.waitFor(s => !!s.lastAck && s.lastAck.seq > before && s.lastAck.command === MAV_CMD.DO_SET_SERVO, ACK_MS);
-      if (this.disposed) throw new EscCalibrationError("Calibration cancelled");
       if (!acked) continue;
       const ack = this.api.getState().lastAck!;
       if (ack.result === 0) return;
@@ -181,11 +167,10 @@ export class EscCalibration {
     throw new EscCalibrationError(`No ACK for setting output ${channel} to ${pwm} µs`);
   }
 
-  private waitFor(predicate: (s: MissionState) => boolean, timeoutMs: number, allowWhenDisposed = false): Promise<boolean> {
+  private waitFor(predicate: (s: MissionState) => boolean, timeoutMs: number): Promise<boolean> {
     return new Promise(resolve => {
       const deadline = Date.now() + timeoutMs;
       const tick = () => {
-        if (this.disposed && !allowWhenDisposed) { resolve(false); return; }
         if (predicate(this.api.getState())) { resolve(true); return; }
         if (Date.now() >= deadline) { resolve(false); return; }
         setTimeout(tick, POLL_MS);
@@ -211,7 +196,6 @@ export class EscCalibration {
 
   private async fail(error: unknown): Promise<void> {
     this.stopGuard();
-    if (this.disposed) return;
     const text = error instanceof Error ? error.message : String(error);
     const pending = Object.keys(this.state.originals).length > 0;
     this.set({ step: "error", busy: false, message: pending ? `${text}. Press Restore outputs to put the motor functions back.` : text });
