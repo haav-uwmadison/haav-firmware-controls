@@ -38,7 +38,8 @@ const phaseBadge: Record<OutputPhase, { tone: Tone; text: string }> = {
 function ReverseToggle({ id, checked, onChange }: { id: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return <div className="grid gap-1.5">
     <div className="flex items-center gap-3">
-      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} />
+      {/* Plex Sans sits low in its line box, so centre the box on the x-height rather than the em box. */}
+      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} className="relative top-[1.5px]" />
       <Label htmlFor={id}>Reverse motor</Label>
     </div>
     <p className="pl-7 text-xs text-muted-foreground">Stick forward sends PWM {checked ? "below" : "above"} 1500 µs.</p>
