@@ -13,6 +13,7 @@ export interface MissionApi {
   dispose(): void;
   setBaud(baud: string): void;
   setMotorSpan(span: number): void;
+  setMotorReverse(motor: "left" | "right", reverse: boolean): void;
   clearTrail(): void;
   /** Re-read the Pixhawk's parameter table. */
   refreshParams(): Promise<void> | void;

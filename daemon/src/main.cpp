@@ -103,6 +103,7 @@ json stateJson(const Mission& m, const std::string& controllerName) {
     {"banner", s.banner.empty() ? json(nullptr) : json(s.banner)},
     {"armPending", s.armPending == ArmPending::None ? json(false) : json(name(s.armPending))},
     {"motorSpan", s.motorSpan},
+    {"motorReverse", {{"left", s.motorReverse.left}, {"right", s.motorReverse.right}}},
     {"startBlockedReason", blocked ? json(blocked) : json(nullptr)},
   };
 }
@@ -232,6 +233,7 @@ int main(int argc, char** argv) {
       else if (name == "disarm") mission.disarm();
       else if (name == "panic") mission.panic();
       else if (name == "setMotorSpan") mission.setMotorSpan(cmd.value("span", DEFAULT_MOTOR_SPAN));
+      else if (name == "setMotorReverse") mission.setMotorReverse(cmd.value("motor", "left") == "left", cmd.value("reverse", false));
       else if (name == "setBaud") mission.setBaud(std::atoi(cmd.value("baud", "57600").c_str()));
       else if (name == "clearTrail") mission.clearTrail();
       else if (name == "refreshParams") mission.refreshParams();

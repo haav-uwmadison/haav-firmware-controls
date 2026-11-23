@@ -76,6 +76,7 @@ struct MissionState {
   std::string banner;
   ArmPending armPending = ArmPending::None;
   int motorSpan = DEFAULT_MOTOR_SPAN;
+  MotorReverse motorReverse;
 };
 
 /** Everything the core needs from the outside world. */
@@ -116,6 +117,8 @@ class Mission {
   /** Esc: stop output and disarm; disarm alone when idle. */
   void panic();
   void setMotorSpan(int span);
+  /** Flip one motor's PWM direction; the reverse pause still runs on the flipped output. */
+  void setMotorReverse(bool left, bool reverse);
   void setBaud(int baud);
   void clearTrail();
   /** Re-read the Pixhawk's parameter table (also runs automatically on each connect). */

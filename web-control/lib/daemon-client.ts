@@ -7,7 +7,7 @@
 //                      {type:"trail", point:[lat,lon]} | {type:"trailClear"}
 //                      {type:"params", items:[{name,value,type,index}], count, loading} | {type:"paramsClear", loading}
 //   browser -> daemon: {name:"connect"|"disconnect"|"startOutput"|"stopOutput"|"arm"|"disarm"|"panic"|"clearTrail"|"refreshParams"}
-//                      {name:"setMotorSpan", span} | {name:"setBaud", baud}
+//                      {name:"setMotorSpan", span} | {name:"setMotorReverse", motor:"left"|"right", reverse} | {name:"setBaud", baud}
 
 import type { MissionApi } from "./mission-api";
 import { blankParams, initialMissionState, type LogLine, type MissionState, type Param, type TrailPoint } from "./mission-controller";
@@ -113,6 +113,7 @@ export class DaemonClient implements MissionApi {
 
   setBaud(baud: string): void { this.send({ name: "setBaud", baud }); }
   setMotorSpan(span: number): void { this.send({ name: "setMotorSpan", span: Math.round(span) }); }
+  setMotorReverse(motor: "left" | "right", reverse: boolean): void { this.send({ name: "setMotorReverse", motor, reverse }); }
   clearTrail(): void { this.send({ name: "clearTrail" }); }
   refreshParams(): void { this.send({ name: "refreshParams" }); }
   connect(): void { this.send({ name: "connect" }); }

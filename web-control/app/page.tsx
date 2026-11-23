@@ -125,7 +125,8 @@ export default function Home() {
         </div>
         <main className="order-1 mx-0 flex w-full max-w-none flex-col gap-4 p-4 lg:order-2">
           <ConsolePanel phase={state.outputPhase} pwm={state.pwm} overridesSent={state.overridesSent} heartbeatsSent={state.heartbeatsSent} banner={state.banner}
-            motorSpan={state.motorSpan} onMotorSpanChange={span => mission.setMotorSpan(span)} format={format} />
+            motorSpan={state.motorSpan} onMotorSpanChange={span => mission.setMotorSpan(span)}
+            motorReverse={state.motorReverse} onMotorReverseChange={(motor, reverse) => mission.setMotorReverse(motor, reverse)} format={format} />
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
             <PfdPanel pfd={state.pfd} telemetry={telemetry} connected={connected} className="h-[440px]" />
             <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />

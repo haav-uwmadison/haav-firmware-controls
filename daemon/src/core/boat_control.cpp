@@ -23,6 +23,13 @@ Command controllerToCommand(const Controller& c) {
   return cmd;
 }
 
+Command applyMotorReverse(const Command& c, const MotorReverse& reverse) {
+  Command out = c;
+  if (reverse.left) out.left = -out.left;
+  if (reverse.right) out.right = -out.right;
+  return out;
+}
+
 int toPwm(float value, int span) {
   return static_cast<int>(std::lround(PWM_NEUTRAL + clampf(value, -1.0f, 1.0f) * static_cast<float>(span)));
 }
