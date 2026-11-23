@@ -104,6 +104,7 @@ json stateJson(const Mission& m, const std::string& controllerName) {
     {"armPending", s.armPending == ArmPending::None ? json(false) : json(name(s.armPending))},
     {"motorSpan", s.motorSpan},
     {"motorReverse", {{"left", s.motorReverse.left}, {"right", s.motorReverse.right}}},
+    {"lastAck", s.lastAck.valid ? json{{"command", s.lastAck.command}, {"result", s.lastAck.result}, {"seq", s.lastAck.seq}} : json(nullptr)},
     {"startBlockedReason", blocked ? json(blocked) : json(nullptr)},
   };
 }
@@ -237,6 +238,14 @@ int main(int argc, char** argv) {
       else if (name == "setBaud") mission.setBaud(std::atoi(cmd.value("baud", "57600").c_str()));
       else if (name == "clearTrail") mission.clearTrail();
       else if (name == "refreshParams") mission.refreshParams();
+      else if (name == "setParam") { if (cmd.contains("param") && cmd["param"].is_string() && cmd.contains("value") && cmd["value"].is_number()) mission.setParam(cmd["param"].get<std::string>(), cmd["value"].get<float>()); }
+      else if (name == "commandLong") {
+        if (cmd.contains("command") && cmd["command"].is_number()) {
+          std::vector<float> params;
+          if (cmd.contains("params") && cmd["params"].is_array()) for (const auto& v : cmd["params"]) params.push_back(v.is_number() ? v.get<float>() : 0.0f);
+          mission.sendCommandLong(static_cast<uint16_t>(cmd["command"].get<int>()), params);
+        }
+      }
     }
     // 4. timers and the control loop
     mission.tick();

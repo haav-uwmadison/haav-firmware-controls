@@ -22,6 +22,9 @@ export type TrailPoint = [number, number];
 export type Param = { name: string; value: number; type: number; index: number };
 export type ParamTable = { byName: Record<string, Param>; count: number; received: number; loading: boolean; updatedAt: number };
 /** Numbers behind the primary flight display; null until the Pixhawk has sent them. */
+/** The most recent COMMAND_ACK; `seq` increases with every ACK so a caller can tell a new one from the last. */
+export type CommandAck = { command: number; result: number; seq: number };
+
 export type Pfd = { rollDeg: number | null; pitchDeg: number | null; yawRateDps: number | null; speedMps: number | null; headingDeg: number | null };
 
 export type MissionState = {
@@ -36,6 +39,7 @@ export type MissionState = {
   armPending: ArmPending; motorSpan: number;
   /** which motors have their PWM direction flipped */
   motorReverse: MotorReverse;
+  lastAck: CommandAck | null;
   /** why output cannot start right now, or null when it can */
   startBlockedReason: string | null;
 };
@@ -68,6 +72,8 @@ const TRAIL_LIMIT = 1200;                                // about 40 minutes at 
 const PARAM_FLUSH_MS = 100;                              // batch PARAM_VALUEs into state updates
 const PARAM_GAP_MS = 1500;                               // silence before asking for missing parameters
 const PARAM_RETRY_BATCH = 40, PARAM_RETRY_LIMIT = 6;
+const commandNames: Record<number, string> = { [MAV_CMD.COMPONENT_ARM_DISARM]: "arm/disarm", [MAV_CMD.DO_SET_MODE]: "set mode", [MAV_CMD.SET_MESSAGE_INTERVAL]: "message interval", [MAV_CMD.DO_SET_SERVO]: "set servo" };
+export const commandName = (command: number): string => commandNames[command] ?? `command ${command}`;
 const STORAGE_KEY_MOTOR_SPAN = "mission.motorSpan";
 const STORAGE_KEY_MOTOR_REVERSE = "mission.motorReverse";
 
@@ -87,7 +93,7 @@ export const initialMissionState: MissionState = {
   telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [], pfd: blankPfd, params: blankParams,
   controller: noController, controllerLost: false,
   sending: false, outputPhase: "idle", pwm: neutralPwm, overridesSent: 0, heartbeatsSent: 0, banner: null,
-  armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, motorReverse: noMotorReverse, startBlockedReason: "Connect to the Pixhawk first",
+  armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, motorReverse: noMotorReverse, lastAck: null, startBlockedReason: "Connect to the Pixhawk first",
 };
 
 // ---- controller ---------------------------------------------------------------------------------
@@ -254,6 +260,23 @@ export class MissionController {
     } catch (error) { this.log(`Neutral/disarm on stop failed: ${String(error)}`, "error"); }
   }
 
+  /** Write one parameter; the Pixhawk echoes it as PARAM_VALUE, which lands in `params`. Type comes from the table. */
+  async setParam(name: string, value: number): Promise<void> {
+    const type = this.state.params.byName[name]?.type ?? 9;
+    try {
+      await this.send(MSG.PARAM_SET, build.paramSet(TARGET_SYSTEM, TARGET_COMPONENT, name, value, type));
+      this.log(`Set ${name} = ${value}`);
+    } catch (error) { this.log(`Set ${name} failed: ${String(error)}`, "error"); }
+  }
+
+  /** Any COMMAND_LONG; the ACK shows up in `lastAck`. */
+  async sendCommand(command: number, params: number[] = []): Promise<void> {
+    try {
+      await this.send(MSG.COMMAND_LONG, build.commandLong(TARGET_SYSTEM, TARGET_COMPONENT, command, params));
+      this.log(`Sent ${commandName(command)}${params.length ? ` (${params.join(", ")})` : ""}`);
+    } catch (error) { this.log(`${commandName(command)} failed: ${String(error)}`, "error"); }
+  }
+
   /** Sets MANUAL mode and arms. */
   async arm(): Promise<void> {
     try {
@@ -398,9 +421,9 @@ export class MissionController {
       if (text) this.log(`Pixhawk: ${text}`, severity <= 3 ? "error" : severity === 4 ? "warn" : "pixhawk");
     } else if (frame.id === MSG.COMMAND_ACK) {
       const ack = decodeCommandAck(frame.payload);
+      this.set({ lastAck: { command: ack.command, result: ack.result, seq: (this.state.lastAck?.seq ?? 0) + 1 } });
       if (ack.command === MAV_CMD.SET_MESSAGE_INTERVAL && ack.result === 0) return;   // four of these per connect; only failures are interesting
-      const name = ack.command === MAV_CMD.COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command === MAV_CMD.DO_SET_MODE ? "set mode" : ack.command === MAV_CMD.SET_MESSAGE_INTERVAL ? "message interval" : `command ${ack.command}`;
-      this.log(`ACK ${name}: ${ackResults[ack.result] ?? ack.result}`, ack.result === 0 ? "ack" : "error");
+      this.log(`ACK ${commandName(ack.command)}: ${ackResults[ack.result] ?? ack.result}`, ack.result === 0 ? "ack" : "error");
       if (ack.command === MAV_CMD.COMPONENT_ARM_DISARM) this.clearAckWait();
     }
   }
@@ -497,6 +520,6 @@ export class MissionController {
   private resetLinkState(): void {
     this.heartbeatAt = 0; this.lostSince = 0; this.streamsRequested = false; this.lastMessage = "—";
     clearTimeout(this.paramFlush); this.paramFlush = undefined; this.paramBuffer.clear(); this.paramCount = 0; this.gps = { fixType: 0, satellites: 0 }; this.lastTrail = null;
-    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd, params: blankParams });
+    this.set({ telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, lostSeconds: 0, position: null, pfd: blankPfd, params: blankParams, lastAck: null });
   }
 }

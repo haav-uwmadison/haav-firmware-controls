@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConsolePanel } from "@/components/ConsolePanel";
+import { EscCalibrationPanel } from "@/components/EscCalibrationPanel";
 import { ControllerPanel } from "@/components/ControllerPanel";
 import { GpsMapPanel } from "@/components/GpsMap";
 import { LogPanel } from "@/components/LogPanel";
@@ -132,7 +133,10 @@ export default function Home() {
             <GpsMapPanel position={state.position} trail={state.trail} follow={followBoat} onFollowChange={setFollowBoat} onClearTrail={() => mission.clearTrail()} className="h-[440px]" />
             <LogPanel lines={state.logs} className="h-[440px] xl:col-span-2 2xl:col-span-1" />
           </div>
-          <ParametersPanel params={state.params} connected={connected} vehicle={telemetry.vehicle} onRefresh={() => void mission.refreshParams()} className="h-[520px]" />
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+            <EscCalibrationPanel mission={mission} state={state} className="h-[640px]" />
+            <ParametersPanel params={state.params} connected={connected} vehicle={telemetry.vehicle} onRefresh={() => void mission.refreshParams()} className="h-[640px]" />
+          </div>
         </main>
       </div>
     </div>

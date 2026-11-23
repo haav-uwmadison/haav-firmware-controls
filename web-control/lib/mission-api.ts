@@ -17,6 +17,10 @@ export interface MissionApi {
   clearTrail(): void;
   /** Re-read the Pixhawk's parameter table. */
   refreshParams(): Promise<void> | void;
+  /** Write one parameter; watch `state.params` for the echoed value. */
+  setParam(name: string, value: number): Promise<void> | void;
+  /** Any COMMAND_LONG to the autopilot; watch `state.lastAck` for the result. */
+  sendCommand(command: number, params?: number[]): Promise<void> | void;
   connect(): Promise<void> | void;
   disconnect(): Promise<void> | void;
   startOutput(): void;

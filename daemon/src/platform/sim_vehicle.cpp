@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 namespace platform {
 
@@ -38,8 +39,9 @@ constexpr int kParamCount = static_cast<int>(sizeof kParams / sizeof kParams[0])
 void SimVehicle::emitParam(int index, std::vector<uint8_t>& out) {
   if (index < 0 || index >= kParamCount) return;
   const SimParam& p = kParams[index];
+  const auto ov = paramOverrides_.find(index);
   mavlink_message_t m;
-  mavlink_msg_param_value_pack(SYS, COMP, &m, p.name, p.value, p.type, static_cast<uint16_t>(kParamCount), static_cast<uint16_t>(index));
+  mavlink_msg_param_value_pack(SYS, COMP, &m, p.name, ov == paramOverrides_.end() ? p.value : ov->second, p.type, static_cast<uint16_t>(kParamCount), static_cast<uint16_t>(index));
   emit(m, out);
 }
 
@@ -68,6 +70,9 @@ void SimVehicle::onBytes(const uint8_t* data, size_t len) {
       mavlink_param_request_read_t r; mavlink_msg_param_request_read_decode(&rx_, &r);
       if (r.param_index >= 0) emitParam(r.param_index, pending_);
       else for (int i = 0; i < kParamCount; i++) if (std::strncmp(kParams[i].name, r.param_id, 16) == 0) emitParam(i, pending_);
+    } else if (rx_.msgid == MAVLINK_MSG_ID_PARAM_SET) {
+      mavlink_param_set_t ps; mavlink_msg_param_set_decode(&rx_, &ps);
+      for (int i = 0; i < kParamCount; i++) if (std::strncmp(kParams[i].name, ps.param_id, 16) == 0) { paramOverrides_[i] = ps.param_value; emitParam(i, pending_); }
     } else if (rx_.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
       mavlink_command_long_t c; mavlink_msg_command_long_decode(&rx_, &c);
       uint8_t result = MAV_RESULT_ACCEPTED;
@@ -80,6 +85,20 @@ void SimVehicle::onBytes(const uint8_t* data, size_t len) {
         mode_ = static_cast<uint32_t>(c.param2);
       } else if (c.command == MAV_CMD_SET_MESSAGE_INTERVAL) {
         // accepted; the simulator already streams at the rates the dashboard asks for
+      } else if (c.command == MAV_CMD_DO_SET_SERVO) {
+        // Like ArduPilot: only an output whose SERVOn_FUNCTION is Disabled takes a raw PWM.
+        const int ch = static_cast<int>(c.param1);
+        int fnIndex = -1;
+        const std::string fnName = "SERVO" + std::to_string(ch) + "_FUNCTION";
+        for (int i = 0; i < kParamCount; i++) if (fnName == kParams[i].name) fnIndex = i;
+        const float fn = fnIndex < 0 ? -1.0f : (paramOverrides_.count(fnIndex) ? paramOverrides_[fnIndex] : kParams[fnIndex].value);
+        if (ch < 1 || ch > 8 || fn != 0.0f) result = MAV_RESULT_FAILED;
+        else {
+          servoPwm_[ch - 1] = static_cast<int>(c.param2);
+          // a hobby ESC's beeps, so the dashboard flow can be followed by eye
+          if (servoPwm_[ch - 1] >= 1900) statusText(pending_, 6, ("Sim ESC " + std::to_string(ch) + ": beep beep (saw full throttle)").c_str());
+          else if (servoPwm_[ch - 1] <= 1100) statusText(pending_, 6, ("Sim ESC " + std::to_string(ch) + ": beep (range stored)").c_str());
+        }
       } else result = MAV_RESULT_UNSUPPORTED;
       mavlink_message_t ack;
       mavlink_msg_command_ack_pack(SYS, COMP, &ack, c.command, result, 0, 0, 0, 0);
