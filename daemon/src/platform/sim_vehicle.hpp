@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <vector>
 
 #include <common/mavlink.h>
@@ -32,6 +33,8 @@ class SimVehicle {
   float voltage_ = 12.6f;
   // Parameter protocol: a slice of the real boat's table, streamed a few per poll like ArduPilot does.
   int paramStreamNext_ = -1;   // next index to stream, -1 when idle
+  std::map<int, float> paramOverrides_;   // values written with PARAM_SET
+  int servoPwm_[8] = {};                  // raw PWM from DO_SET_SERVO, 0 = untouched
   bool droppedOnce_ = false;   // drop one PARAM_VALUE on the first list to exercise the gap retry
   void emitParam(int index, std::vector<uint8_t>& out);
 };

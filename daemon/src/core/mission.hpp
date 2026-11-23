@@ -77,6 +77,8 @@ struct MissionState {
   ArmPending armPending = ArmPending::None;
   int motorSpan = DEFAULT_MOTOR_SPAN;
   MotorReverse motorReverse;
+  /** most recent COMMAND_ACK; seq increases with every ACK so the dashboard can tell a new one from the last */
+  struct CommandAck { bool valid = false; int command = 0; int result = 0; uint32_t seq = 0; } lastAck;
 };
 
 /** Everything the core needs from the outside world. */
@@ -123,6 +125,10 @@ class Mission {
   void clearTrail();
   /** Re-read the Pixhawk's parameter table (also runs automatically on each connect). */
   void refreshParams();
+  /** PARAM_SET; the Pixhawk echoes PARAM_VALUE, which lands in the table. Type comes from the table (REAL32 if unknown). */
+  void setParam(const std::string& name, float value);
+  /** Any COMMAND_LONG with up to seven params; the ACK lands in state.lastAck. */
+  void sendCommandLong(uint16_t command, const std::vector<float>& params);
   void logExternal(const std::string& text, LogKind kind = LogKind::Info) { log(text, kind); }
 
   // ---- state ----

@@ -176,6 +176,40 @@ void Mission::panic() {
 void Mission::setMotorSpan(int span) { s_.motorSpan = std::min(MAX_MOTOR_SPAN, std::max(MIN_MOTOR_SPAN, span)); }
 void Mission::setMotorReverse(bool left, bool reverse) { (left ? s_.motorReverse.left : s_.motorReverse.right) = reverse; }
 void Mission::setBaud(int baud) { if (!s_.connected && !s_.connecting) s_.baud = baud; }
+static const char* commandName(uint16_t command) {
+  switch (command) {
+    case MAV_CMD_COMPONENT_ARM_DISARM: return "arm/disarm";
+    case MAV_CMD_DO_SET_MODE: return "set mode";
+    case MAV_CMD_SET_MESSAGE_INTERVAL: return "message interval";
+    case MAV_CMD_DO_SET_SERVO: return "set servo";
+    default: return nullptr;
+  }
+}
+static std::string commandLabel(uint16_t command) { const char* n = commandName(command); return n ? n : "command " + std::to_string(command); }
+
+void Mission::setParam(const std::string& name, float value) {
+  if (!s_.connected) return;
+  const auto it = params_.byName.find(name);
+  const uint8_t type = it == params_.byName.end() ? MAV_PARAM_TYPE_REAL32 : static_cast<uint8_t>(it->second.type);
+  char id[17] = {}; std::strncpy(id, name.c_str(), 16);
+  mavlink_message_t msg;
+  mavlink_msg_param_set_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT, id, value, type);
+  if (!send(msg)) { log("Set " + name + " failed: write error", LogKind::Error); return; }
+  log("Set " + name + " = " + fmt("%g", value));
+}
+
+void Mission::sendCommandLong(uint16_t command, const std::vector<float>& params) {
+  if (!s_.connected) return;
+  float p[7] = {};
+  for (size_t i = 0; i < params.size() && i < 7; i++) p[i] = params[i];
+  mavlink_message_t msg;
+  mavlink_msg_command_long_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT, command, 0, p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+  if (!send(msg)) { log(commandLabel(command) + " failed: write error", LogKind::Error); return; }
+  std::string args;
+  for (size_t i = 0; i < params.size() && i < 7; i++) args += (i ? ", " : "") + fmt("%g", params[i]);
+  log("Sent " + commandLabel(command) + (args.empty() ? "" : " (" + args + ")"));
+}
+
 void Mission::refreshParams() {
   if (!s_.connected) return;
   params_ = ParamTable{}; params_.loading = true; paramBatch_.clear(); paramRetries_ = 0; lastParamAt_ = io_.nowMs(); nextParamFlushAt_ = 0;
@@ -379,8 +413,9 @@ void Mission::handleFrame(const mavlink_message_t& msg) {
     }
     case MAVLINK_MSG_ID_COMMAND_ACK: {
       mavlink_command_ack_t ack; mavlink_msg_command_ack_decode(&msg, &ack);
+      s_.lastAck.valid = true; s_.lastAck.command = ack.command; s_.lastAck.result = ack.result; s_.lastAck.seq++;
       if (ack.command == MAV_CMD_SET_MESSAGE_INTERVAL && ack.result == MAV_RESULT_ACCEPTED) break;   // four per connect; only failures are interesting
-      const std::string cmdName = ack.command == MAV_CMD_COMPONENT_ARM_DISARM ? "arm/disarm" : ack.command == MAV_CMD_DO_SET_MODE ? "set mode" : ack.command == MAV_CMD_SET_MESSAGE_INTERVAL ? "message interval" : "command " + std::to_string(ack.command);
+      const std::string cmdName = commandLabel(ack.command);
       const char* r = ackName(ack.result);
       log("ACK " + cmdName + ": " + (r ? r : std::to_string(ack.result)), ack.result == 0 ? LogKind::Ack : LogKind::Error);
       if (ack.command == MAV_CMD_COMPONENT_ARM_DISARM) clearAckWait();
@@ -453,7 +488,7 @@ void Mission::clearAckWait() { ackDeadline_ = 0; s_.armPending = ArmPending::Non
 
 void Mission::resetLinkState() {
   heartbeatAt_ = 0; lostSince_ = 0; streamsRequested_ = false; lastMessage_ = "—";
-  params_ = ParamTable{}; paramBatch_.clear(); nextParamFlushAt_ = 0; paramRetries_ = 0; if (onParamsCleared) onParamsCleared(false); seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
+  params_ = ParamTable{}; paramBatch_.clear(); nextParamFlushAt_ = 0; paramRetries_ = 0; if (onParamsCleared) onParamsCleared(false); s_.lastAck = MissionState::CommandAck{}; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
   rxStatus_ = mavlink_status_t{};
   s_.telemetry = Telemetry{}; s_.pfd = Pfd{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
   s_.hasPosition = false; s_.position = Position{};

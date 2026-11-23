@@ -3,7 +3,7 @@
 // Keep this file free of browser or React code so it can be unit tested in Node.
 
 export const MSG = {
-  HEARTBEAT: 0, SYS_STATUS: 1, PARAM_REQUEST_READ: 20, PARAM_REQUEST_LIST: 21, PARAM_VALUE: 22, GPS_RAW_INT: 24, ATTITUDE: 30, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
+  HEARTBEAT: 0, SYS_STATUS: 1, PARAM_REQUEST_READ: 20, PARAM_REQUEST_LIST: 21, PARAM_VALUE: 22, PARAM_SET: 23, GPS_RAW_INT: 24, ATTITUDE: 30, GLOBAL_POSITION_INT: 33, MANUAL_CONTROL: 69,
   RC_CHANNELS_OVERRIDE: 70, VFR_HUD: 74, COMMAND_LONG: 76, COMMAND_ACK: 77, STATUSTEXT: 253,
 } as const;
 
@@ -11,7 +11,7 @@ export const messageNames: Record<number, string> = Object.fromEntries(Object.en
 
 import { crcExtra } from "./mavlink-crc";
 
-export const MAV_CMD = { DO_SET_MODE: 176, COMPONENT_ARM_DISARM: 400, SET_MESSAGE_INTERVAL: 511 } as const;
+export const MAV_CMD = { DO_SET_MODE: 176, COMPONENT_ARM_DISARM: 400, DO_SET_SERVO: 183, SET_MESSAGE_INTERVAL: 511 } as const;
 export const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1;
 export const MAV_MODE_FLAG_SAFETY_ARMED = 128;
 export const ROVER_MODE_MANUAL = 0;
@@ -185,6 +185,15 @@ export const build = {
     const out = new Uint8Array(20);
     new DataView(out.buffer).setInt16(0, index, true);
     out[2] = targetSys; out[3] = targetComp;
+    return out;
+  },
+  /** Write one parameter. ArduPilot answers with PARAM_VALUE carrying the stored value. */
+  paramSet(targetSys: number, targetComp: number, name: string, value: number, type: number): Uint8Array {
+    const out = new Uint8Array(23);
+    new DataView(out.buffer).setFloat32(0, value, true);
+    out[4] = targetSys; out[5] = targetComp;
+    out.set(new TextEncoder().encode(name).subarray(0, 16), 6);
+    out[22] = type;
     return out;
   },
   commandLong(targetSys: number, targetComp: number, command: number, params: number[] = []): Uint8Array {
