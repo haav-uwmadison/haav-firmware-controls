@@ -17,6 +17,15 @@ export type BoatPwm = { left: number; right: number; rudder: number };     // mi
 
 export const neutralCommand: BoatCommand = { left: 0, right: 0, rudder: 0 };
 
+/** Per-motor direction flip, for when a thruster is wired or mounted the other way round. */
+export type MotorReverse = { left: boolean; right: boolean };
+export const noMotorReverse: MotorReverse = { left: false, right: false };
+
+/** Flips the sign of each reversed motor so stick forward still sends that motor's PWM below neutral. */
+export function applyMotorReverse(c: BoatCommand, reverse: MotorReverse): BoatCommand {
+  return { left: reverse.left ? -c.left : c.left, right: reverse.right ? -c.right : c.right, rudder: c.rudder };
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** Ignores small stick offsets and rescales so output ramps from 0 at the deadzone edge. */

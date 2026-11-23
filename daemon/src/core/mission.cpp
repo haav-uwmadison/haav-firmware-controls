@@ -174,6 +174,7 @@ void Mission::panic() {
 }
 
 void Mission::setMotorSpan(int span) { s_.motorSpan = std::min(MAX_MOTOR_SPAN, std::max(MIN_MOTOR_SPAN, span)); }
+void Mission::setMotorReverse(bool left, bool reverse) { (left ? s_.motorReverse.left : s_.motorReverse.right) = reverse; }
 void Mission::setBaud(int baud) { if (!s_.connected && !s_.connecting) s_.baud = baud; }
 void Mission::refreshParams() {
   if (!s_.connected) return;
@@ -250,7 +251,7 @@ void Mission::loopTick(uint32_t now) {
     stopOutput("controller disconnected", true);
     return;
   }
-  const Command cmd = controllerToCommand(c);
+  const Command cmd = applyMotorReverse(controllerToCommand(c), s_.motorReverse);
   Command paused = cmd;
   paused.left = reverseLeft_.apply(cmd.left, now);
   paused.right = reverseRight_.apply(cmd.right, now);

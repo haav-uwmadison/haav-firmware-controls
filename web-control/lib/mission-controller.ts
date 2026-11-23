@@ -3,7 +3,7 @@
 // and calls the public methods. Everything time- or browser-dependent is injected or started lazily so
 // this class can be constructed during server rendering and unit tested in Node.
 
-import { commandToPwm, controllerToCommand, DEFAULT_MOTOR_SPAN, MAX_MOTOR_SPAN, MIN_MOTOR_SPAN, pwmToChannels, rudderNeutralChannels, ReversePause, type BoatPwm } from "./boat-control";
+import { applyMotorReverse, commandToPwm, controllerToCommand, DEFAULT_MOTOR_SPAN, MAX_MOTOR_SPAN, MIN_MOTOR_SPAN, noMotorReverse, pwmToChannels, rudderNeutralChannels, ReversePause, type BoatPwm, type MotorReverse } from "./boat-control";
 import { noController, type ControllerState } from "./gamepad";
 import { ackResults, build, decodeAttitude, decodeCommandAck, decodeGlobalPositionInt, decodeGpsRawInt, decodeHeartbeat, decodeParamValue, decodeStatusText, decodeSysStatus, MAV_CMD, MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, MavlinkEncoder, MavlinkParser, messageNames, MSG, ROVER_MODE_MANUAL, type Frame } from "./mavlink";
 import { SerialLink } from "./serial-link";
@@ -34,6 +34,8 @@ export type MissionState = {
   // output
   sending: boolean; outputPhase: OutputPhase; pwm: BoatPwm; overridesSent: number; heartbeatsSent: number; banner: string | null;
   armPending: ArmPending; motorSpan: number;
+  /** which motors have their PWM direction flipped */
+  motorReverse: MotorReverse;
   /** why output cannot start right now, or null when it can */
   startBlockedReason: string | null;
 };
@@ -67,6 +69,7 @@ const PARAM_FLUSH_MS = 100;                              // batch PARAM_VALUEs i
 const PARAM_GAP_MS = 1500;                               // silence before asking for missing parameters
 const PARAM_RETRY_BATCH = 40, PARAM_RETRY_LIMIT = 6;
 const STORAGE_KEY_MOTOR_SPAN = "mission.motorSpan";
+const STORAGE_KEY_MOTOR_REVERSE = "mission.motorReverse";
 
 export const neutralPwm: BoatPwm = { left: 1500, right: 1500, rudder: 1500 };
 export const bauds = ["57600", "115200", "921600"];
@@ -84,7 +87,7 @@ export const initialMissionState: MissionState = {
   telemetry: blankTelemetry, frames: 0, bytesIn: 0, recovered: 0, badCrc: 0, logs: [], position: null, trail: [], pfd: blankPfd, params: blankParams,
   controller: noController, controllerLost: false,
   sending: false, outputPhase: "idle", pwm: neutralPwm, overridesSent: 0, heartbeatsSent: 0, banner: null,
-  armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, startBlockedReason: "Connect to the Pixhawk first",
+  armPending: false, motorSpan: DEFAULT_MOTOR_SPAN, motorReverse: noMotorReverse, startBlockedReason: "Connect to the Pixhawk first",
 };
 
 // ---- controller ---------------------------------------------------------------------------------
@@ -135,6 +138,10 @@ export class MissionController {
     this.started = true;
     const storage = this.options.storage === undefined ? (typeof window !== "undefined" ? window.localStorage : null) : this.options.storage;
     try { const saved = Number(storage?.getItem(STORAGE_KEY_MOTOR_SPAN)); if (Number.isFinite(saved) && saved > 0) this.setMotorSpan(saved); } catch { /* storage unavailable */ }
+    try {
+      const saved = JSON.parse(storage?.getItem(STORAGE_KEY_MOTOR_REVERSE) ?? "null") as Partial<MotorReverse> | null;
+      if (saved && typeof saved === "object") this.set({ motorReverse: { left: saved.left === true, right: saved.right === true } });
+    } catch { /* storage unavailable or unreadable */ }
     this.unsubscribeInput = this.options.input.subscribe(c => this.onInput(c));
     this.timers.watchdog = setInterval(() => this.watchdog(), 500);
     this.timers.lastMessage = setInterval(() => { if (this.state.telemetry.last !== this.lastMessage) this.set({ telemetry: { ...this.state.telemetry, last: this.lastMessage } }); }, LAST_MESSAGE_REFRESH_MS);
@@ -164,6 +171,14 @@ export class MissionController {
     this.set({ motorSpan: clamped });
     const storage = this.options.storage === undefined ? (typeof window !== "undefined" ? window.localStorage : null) : this.options.storage;
     try { storage?.setItem(STORAGE_KEY_MOTOR_SPAN, String(clamped)); } catch { /* storage unavailable */ }
+  }
+
+  /** Flip one motor's PWM direction. Applies to the next loop tick; the reverse pause still runs on the flipped output. */
+  setMotorReverse(motor: keyof MotorReverse, reverse: boolean): void {
+    const motorReverse = { ...this.state.motorReverse, [motor]: reverse };
+    this.set({ motorReverse });
+    const storage = this.options.storage === undefined ? (typeof window !== "undefined" ? window.localStorage : null) : this.options.storage;
+    try { storage?.setItem(STORAGE_KEY_MOTOR_REVERSE, JSON.stringify(motorReverse)); } catch { /* storage unavailable */ }
   }
 
   clearTrail(): void { this.lastTrail = null; this.set({ trail: [] }); }
@@ -304,7 +319,7 @@ export class MissionController {
       busy = true;
       try {
         const now = performance.now();
-        const command = controllerToCommand(c);
+        const command = applyMotorReverse(controllerToCommand(c), this.state.motorReverse);
         const pwm = commandToPwm({ left: reverse.left.apply(command.left, now), right: reverse.right.apply(command.right, now), rudder: command.rudder }, this.state.motorSpan);
         this.set({ pwm });
         await this.sendOverride(pwm);

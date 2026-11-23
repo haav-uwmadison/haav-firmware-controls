@@ -27,9 +27,13 @@ struct Controller {
 
 struct Command { float left = 0, right = 0, rudder = 0; };   // each -1..1
 struct Pwm { int left = PWM_NEUTRAL, right = PWM_NEUTRAL, rudder = PWM_NEUTRAL; };
+/** Per-motor direction flip, for a thruster wired or mounted the other way round. */
+struct MotorReverse { bool left = false, right = false; };
 
 float applyDeadzone(float value);
 Command controllerToCommand(const Controller& c);
+/** Flips the sign of each reversed motor so stick forward sends that motor's PWM below neutral. */
+Command applyMotorReverse(const Command& c, const MotorReverse& reverse);
 int toPwm(float value, int span = PWM_SPAN);
 /** Motors scale to 1500 +- motorSpan so full stick maps to the limit; the rudder always uses the full range. */
 Pwm commandToPwm(const Command& c, int motorSpan = PWM_SPAN);
