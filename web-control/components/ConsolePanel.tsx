@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { BipolarGauge } from "@/components/BipolarGauge";
 import { toneBadge, type Tone } from "@/components/StatusBar";
@@ -35,20 +36,13 @@ const phaseBadge: Record<OutputPhase, { tone: Tone; text: string }> = {
 
 /** Flips one motor's PWM so stick forward sends it below 1500 µs. Takes effect on the next override, even while sending. */
 function ReverseToggle({ id, checked, onChange }: { id: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return <label htmlFor={id} className={cn(
-    "flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors select-none",
-    checked ? "border-warn/50 bg-warn/10" : "border-border bg-panel-2 hover:border-zinc-600",
-  )}>
-    <span className="flex min-w-0 items-center gap-2.5">
-      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} aria-label="Reverse this motor's PWM direction"
-        className="size-[18px] rounded-[5px] border-zinc-600 data-checked:border-warn data-checked:bg-warn data-checked:text-zinc-950" />
-      <span className="flex min-w-0 flex-col leading-tight">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Reverse PWM</span>
-        <span className="truncate text-[11px] text-muted-foreground">{checked ? "Stick forward sends below 1500 µs" : "Stick forward sends above 1500 µs"}</span>
-      </span>
-    </span>
-    <Badge className={cn("shrink-0 text-[10px] font-bold tracking-[0.06em]", toneBadge[checked ? "warn" : "idle"])}>{checked ? "Reversed" : "Normal"}</Badge>
-  </label>;
+  return <div className="grid gap-1.5">
+    <div className="flex items-center gap-3">
+      <Checkbox id={id} checked={checked} onCheckedChange={v => onChange(v === true)} />
+      <Label htmlFor={id}>Reverse motor</Label>
+    </div>
+    <p className="pl-7 text-xs text-muted-foreground">Stick forward sends PWM {checked ? "below" : "above"} 1500 µs.</p>
+  </div>;
 }
 
 /** Centre panel: the three outputs the Pixhawk is being told to drive, plus arming. */
