@@ -17,7 +17,7 @@ export const DAEMON_PORT = 8765;
 /** `?ws=<port>` on the page picks a daemon started with `--ws <port>`; otherwise the default port. */
 export function daemonUrl(): string {
   const port = typeof window === "undefined" ? null : Number(new URLSearchParams(window.location.search).get("ws"));
-  return `ws://127.0.0.1:${port && port > 0 && port < 65536 ? port : DAEMON_PORT}`;
+  return `ws://127.0.0.1:${port && Number.isInteger(port) && port > 0 && port < 65536 ? port : DAEMON_PORT}`;
 }
 const LOG_LIMIT = 200;
 

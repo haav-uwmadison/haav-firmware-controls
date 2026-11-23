@@ -231,18 +231,28 @@ void Mission::flushParams(uint32_t now) {
   (void)now;
 }
 
-// The list stream drops frames on a radio link; ask for the gaps one index at a time.
+// The list stream drops frames on a radio link; retry the whole list if nothing arrived yet, or ask for gaps by index.
 void Mission::paramWatchdog(uint32_t now) {
-  if (!params_.loading || params_.count == 0 || now - lastParamAt_ < PARAM_GAP_MS) return;
+  if (!params_.loading || now - lastParamAt_ < PARAM_GAP_MS) return;
   if (paramRetries_ >= PARAM_RETRY_LIMIT) {
-    log(std::to_string(params_.count - static_cast<int>(params_.byName.size())) + " parameters never arrived; press Refresh to try again", LogKind::Warn);
+    if (params_.count == 0) {
+      log("Parameters never arrived; press Refresh to try again", LogKind::Warn);
+    } else {
+      log(std::to_string(params_.count - static_cast<int>(params_.byName.size())) + " parameters never arrived; press Refresh to try again", LogKind::Warn);
+    }
     params_.loading = false;
     if (onParams) onParams({}, params_.count, false);
     return;
   }
+  paramRetries_++; lastParamAt_ = now;
+  if (params_.count == 0) {
+    mavlink_message_t msg;
+    mavlink_msg_param_request_list_pack(GCS_SYSTEM, GCS_COMPONENT, &msg, TARGET_SYSTEM, TARGET_COMPONENT);
+    send(msg);
+    return;
+  }
   std::vector<bool> have(static_cast<size_t>(params_.count), false);
   for (const auto& kv : params_.byName) if (kv.second.index >= 0 && kv.second.index < params_.count) have[static_cast<size_t>(kv.second.index)] = true;
-  paramRetries_++; lastParamAt_ = now;
   int asked = 0;
   for (int i = 0; i < params_.count && asked < PARAM_RETRY_BATCH; i++) {
     if (have[static_cast<size_t>(i)]) continue;
@@ -488,8 +498,9 @@ void Mission::clearAckWait() { ackDeadline_ = 0; s_.armPending = ArmPending::Non
 
 void Mission::resetLinkState() {
   heartbeatAt_ = 0; lostSince_ = 0; streamsRequested_ = false; lastMessage_ = "—";
-  params_ = ParamTable{}; paramBatch_.clear(); nextParamFlushAt_ = 0; paramRetries_ = 0; if (onParamsCleared) onParamsCleared(false); s_.lastAck = MissionState::CommandAck{}; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
+  params_ = ParamTable{}; paramBatch_.clear(); nextParamFlushAt_ = 0; lastParamAt_ = 0; paramRetries_ = 0; if (onParamsCleared) onParamsCleared(false); s_.lastAck = MissionState::CommandAck{}; seenErrors_.clear(); gpsFix_ = gpsSats_ = 0; haveTrail_ = false;
   rxStatus_ = mavlink_status_t{};
+  *mavlink_get_channel_status(MAVLINK_COMM_0) = mavlink_status_t{};
   s_.telemetry = Telemetry{}; s_.pfd = Pfd{}; s_.frames = s_.bytesIn = s_.recovered = s_.badCrc = 0; s_.lostSeconds = 0;
   s_.hasPosition = false; s_.position = Position{};
 }

@@ -11,10 +11,8 @@ import argparse
 import asyncio
 import json
 import secrets
-import signal
 import sys
 import time
-from pathlib import Path
 
 import pygame
 from pymavlink import mavutil
@@ -26,11 +24,18 @@ GCS_COMPID = 190
 TARGET_SYSID = 1
 TARGET_COMPID = 1
 TICK_SECONDS = 0.05
-OVERRIDE_TTL_SECONDS = 1.0
 DEADZONE = 0.10
 REVERSE_PAUSE_SECONDS = 0.5
 MODE_NAMES = {0: "MANUAL", 1: "ACRO", 2: "STEERING", 3: "HOLD", 4: "LOITER", 6: "GUIDED", 10: "AUTO", 11: "RTL"}
 ALLOWED_ORIGINS = {"https://mission.haav.build", "http://localhost:3000", "http://127.0.0.1:3000"}
+
+
+def clamp(value: float, lo: float = -1.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, value))
+
+
+def to_pwm(value: float) -> int:
+    return round(1500 + clamp(value) * 500)
 
 
 def list_ports() -> None:
@@ -207,7 +212,7 @@ class BoatAgent:
             "lastMessage": self.last_message, "frames": self.frames,
             "overridesSent": self.overrides_sent, "controller": self.controller.get_name() if self.controller else None,
             "axes": {"left": left, "right": right, "lt": lt, "rt": rt, "a": a, "b": b},
-            "pwm": {"left": round(1500 + left * 500), "right": round(1500 + right * 500), "rudder": round(1500 + (rt - lt) * 500)},
+            "pwm": {"left": to_pwm(left), "right": to_pwm(right), "rudder": to_pwm(rt - lt)},
             "errors": self.errors[-5:],
         }
 
@@ -224,7 +229,8 @@ class BoatAgent:
             if name == "HEARTBEAT" and msg.get_srcSystem() == TARGET_SYSID:
                 self._last_heartbeat = time.monotonic()
                 self.armed = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-                self.vehicle_name = mavutil.mavlink.enums["MAV_TYPE"].get(msg.type, "—").name
+                mav_type = mavutil.mavlink.enums["MAV_TYPE"].get(msg.type)
+                self.vehicle_name = mav_type.name if mav_type is not None else f"MAV_TYPE {msg.type}"
                 self.mode = MODE_NAMES.get(msg.custom_mode, f"Custom {msg.custom_mode}")
             elif name == "GPS_RAW_INT":
                 fix = "3D fix" if msg.fix_type >= 3 else "No 3D fix"
@@ -251,7 +257,11 @@ class BoatAgent:
         except Exception:
             await socket.close(code=1008, reason="Local bridge authentication required")
             return
-        if auth.get("token") != self.password:
+        if (
+            not isinstance(auth, dict)
+            or not isinstance(auth.get("token"), str)
+            or not secrets.compare_digest(auth["token"].encode("utf-8"), self.password.encode("utf-8"))
+        ):
             await socket.close(code=1008, reason="Bad local token")
             return
         self.clients.add(socket)
@@ -305,25 +315,29 @@ class BoatAgent:
                 if self.vehicle and now - last_ui >= 1:
                     self.vehicle.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, mavutil.mavlink.MAV_STATE_ACTIVE)
                     last_ui = now
+                left, right, lt, rt, a, b = self.axes()
+                if self.vehicle and b and not previous_b:
+                    if self.sending:
+                        self.stop("B pressed", disarm=True)
+                    else:
+                        self.disarm()
                 if self.sending:
                     if not self._last_heartbeat or now - self._last_heartbeat > 3:
                         self.stop("Pixhawk heartbeat lost", disarm=True)
+                        previous_a, previous_b = a, b
                         await self.broadcast()
                         await asyncio.sleep(TICK_SECONDS)
                         continue
-                    left, right, lt, rt, a, b = self.axes()
                     left = self._reverse_left.apply(left, now)
                     right = self._reverse_right.apply(right, now)
-                    self._send_override(round(1500 + left * 500), round(1500 + right * 500), round(1500 + (rt - lt) * 500))
+                    self._send_override(to_pwm(left), to_pwm(right), to_pwm(rt - lt))
                     if a and not previous_a:
                         self.arm_manual()
-                    if b and not previous_b:
-                        self.stop("B pressed", disarm=True)
-                    previous_a, previous_b = self.axes()[4:]
                 elif self.vehicle and not self.armed and self._last_heartbeat and now - self._last_heartbeat <= 3:
                     # A single neutral frame expires after RC_OVERRIDE_TIME. Keep RC6
                     # centered while disarmed so RCIN6Scaled cannot follow a live trigger.
                     self._send_rudder_neutral()
+                previous_a, previous_b = a, b
                 await self.broadcast()
                 await asyncio.sleep(TICK_SECONDS)
 
