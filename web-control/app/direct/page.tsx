@@ -204,6 +204,23 @@ export default function Home() {
   const disconnect = async () => { await stopSending("disconnecting"); await linkRef.current?.disconnect(); };
 
   useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden && sendingRef.current) {
+        void stopSending("tab hidden", { disarm: true });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      if (sendingRef.current) {
+        void stopSending("page closed", { disarm: true }).finally(() => linkRef.current?.disconnect());
+      } else {
+        void linkRef.current?.disconnect();
+      }
+    };
+  }, [stopSending]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       if (heartbeatRef.current && Date.now() - heartbeatRef.current > 3000) {
         setConnection("Heartbeat lost"); setConnectionKind("bad"); setStatus(old => ({ ...old, heartbeat: "Timed out" }));

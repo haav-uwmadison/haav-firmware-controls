@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { toneBadge, type Tone } from "@/components/StatusBar";
-import { ESC_CAL_MAX_PWM, ESC_CAL_MIN_PWM, EscCalibration, escCalBlockedReason, escCalNeedsRestore, motorOutputs, type EscCalStep } from "@/lib/esc-calibration";
+import { ESC_CAL_MAX_PWM, ESC_CAL_MIN_PWM, EscCalibration, escCalBlockedReason, escCalNeedsRestore, initialEscCalState, motorOutputs, type EscCalStep } from "@/lib/esc-calibration";
 import type { MissionApi } from "@/lib/mission-api";
 import type { MissionState } from "@/lib/mission-controller";
 import { cn } from "@/lib/utils";
@@ -31,11 +31,16 @@ const stepBadge: Record<EscCalStep, { tone: Tone; text: string }> = {
 /** Which of the three on-screen steps each state belongs to. */
 const stepIndex: Record<EscCalStep, number> = { idle: 0, preparing: 1, max: 1, min: 2, restoring: 3, done: 3, error: 0 };
 
+const getServerEscCalState = () => initialEscCalState;
+
 export function EscCalibrationPanel({ mission, state, className }: Props) {
   // one calibration runner per backend instance
   const runner = useMemo(() => new EscCalibration(mission), [mission]);
-  useEffect(() => () => runner.dispose(), [runner]);
-  const cal = useSyncExternalStore(runner.subscribe, runner.getState, runner.getState);
+  useEffect(() => {
+    runner.hydrate();
+    return () => runner.dispose();
+  }, [runner]);
+  const cal = useSyncExternalStore(runner.subscribe, runner.getState, getServerEscCalState);
   const [confirmed, setConfirmed] = useState(false);
 
   const blocked = escCalBlockedReason(state);
@@ -86,7 +91,7 @@ export function EscCalibrationPanel({ mission, state, className }: Props) {
         {steps.map((s, i) => {
           const active = running || cal.step === "preparing" || cal.step === "restoring" ? current === i : false;
           const complete = (running || cal.step === "restoring" || cal.step === "done") && i < current;
-          return <li key={s.title} className={cn("flex gap-3", active ? "text-foreground" : complete ? "text-muted-foreground" : "text-muted-foreground")}>
+          return <li key={s.title} className={cn("flex gap-3", active ? "text-foreground" : "text-muted-foreground")}>
             <span className={cn("mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border font-mono text-[11px] font-semibold",
               active ? "border-warn bg-warn/15 text-warn-foreground" : complete ? "border-ok/60 bg-ok/15 text-ok-foreground" : "border-border")}>
               {complete ? <CheckIcon className="size-3" /> : i + 1}
