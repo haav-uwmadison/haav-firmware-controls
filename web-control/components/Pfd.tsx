@@ -169,7 +169,7 @@ function TurnTape({ dps }: { dps: number | null }) {
       </g>;
     })}
     <line x1={TURN_X} y1={mid} x2={TURN_X + TURN_W} y2={mid} stroke={colors.dim} strokeWidth={1} />
-    {/* needle: left turn (negative) points up like a port-side rate indicator */}
+    {/* needle: positive (right/starboard turn) rises above centre, negative (left/port turn) drops below */}
     <polygon points={`${TURN_X + TURN_W},${mid - v * pxPer} ${TURN_X + TURN_W - 16},${mid - v * pxPer - 7} ${TURN_X + TURN_W - 16},${mid - v * pxPer + 7}`} fill={colors.magenta} />
     <text x={TURN_X + TURN_W - 2} y={TAPE_Y - 10} textAnchor="end" fill={colors.magenta} fontSize={13} fontWeight={700}>TURN °/s</text>
     <text x={TURN_X + TURN_W - 2} y={TAPE_Y + TAPE_H + 20} textAnchor="end" fill={colors.green} fontSize={13} fontWeight={700}>{dps === null ? "---" : `${dps > 0 ? "R" : dps < 0 ? "L" : ""} ${Math.abs(dps).toFixed(1)}`}</text>

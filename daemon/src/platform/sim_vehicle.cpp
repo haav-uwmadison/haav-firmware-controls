@@ -26,13 +26,13 @@ struct SimParam { const char* name; float value; uint8_t type; };
 static const SimParam kParams[] = {
   {"AHRS_EKF_TYPE", 3, 2}, {"ARMING_CHECK", 1, 6}, {"BATT_MONITOR", 4, 2}, {"BATT_CAPACITY", 5000, 6}, {"CRUISE_SPEED", 2, 9}, {"CRUISE_THROTTLE", 50, 2},
   {"FRAME_CLASS", 2, 2}, {"FS_ACTION", 2, 2}, {"FS_TIMEOUT", 1.5f, 9}, {"FS_THR_ENABLE", 1, 2}, {"GPS1_TYPE", 1, 2}, {"MAV_GCS_SYSID", 255, 4},
-  {"MOT_PWM_TYPE", 0, 2}, {"MOT_THR_MAX", 100, 2}, {"MOT_THR_MIN", 0, 2}, {"MOT_SLEWRATE", 100, 2}, {"PILOT_STEER_TYPE", 1, 2}, {"RC_OVERRIDE_TIME", 1, 9},
+  {"MOT_PWM_TYPE", 0, 2}, {"MOT_THR_MAX", 100, 2}, {"MOT_THR_MIN", 0, 2}, {"MOT_SLEWRATE", 0, 4}, {"PILOT_STEER_TYPE", 1, 2}, {"RC_OVERRIDE_TIME", 1, 9},
   {"RC1_MAX", 2000, 4}, {"RC1_MIN", 1000, 4}, {"RC1_TRIM", 1500, 4}, {"RC3_MAX", 2000, 4}, {"RC3_MIN", 1000, 4}, {"RC3_TRIM", 1500, 4},
   {"RC6_MAX", 2000, 4}, {"RC6_MIN", 1000, 4}, {"RC6_TRIM", 1500, 4}, {"SERIAL1_BAUD", 57, 6}, {"SERIAL1_PROTOCOL", 2, 2},
-  {"SERVO1_FUNCTION", 73, 4}, {"SERVO1_MAX", 2000, 4}, {"SERVO1_MIN", 1000, 4}, {"SERVO1_REVERSED", 0, 2}, {"SERVO1_TRIM", 1500, 4},
-  {"SERVO2_FUNCTION", 74, 4}, {"SERVO2_MAX", 2000, 4}, {"SERVO2_MIN", 1000, 4}, {"SERVO2_REVERSED", 0, 2}, {"SERVO2_TRIM", 1500, 4},
-  {"SERVO3_FUNCTION", 56, 4}, {"SERVO3_MAX", 2000, 4}, {"SERVO3_MIN", 1000, 4}, {"SERVO3_REVERSED", 0, 2}, {"SERVO3_TRIM", 1500, 4},
-  {"SYSID_THISMAV", 1, 4}, {"WP_SPEED", 1.5f, 9},
+  {"SERVO1_FUNCTION", 73, 4}, {"SERVO1_MAX", 1750, 4}, {"SERVO1_MIN", 1250, 4}, {"SERVO1_REVERSED", 0, 2}, {"SERVO1_TRIM", 1500, 4},
+  {"SERVO2_FUNCTION", 74, 4}, {"SERVO2_MAX", 1750, 4}, {"SERVO2_MIN", 1250, 4}, {"SERVO2_REVERSED", 0, 2}, {"SERVO2_TRIM", 1500, 4},
+  {"SERVO3_FUNCTION", 145, 4}, {"SERVO3_MAX", 1750, 4}, {"SERVO3_MIN", 1250, 4}, {"SERVO3_REVERSED", 0, 2}, {"SERVO3_TRIM", 1500, 4},
+  {"MAV_SYSID", 1, 4}, {"WP_SPEED", 2, 9},
 };
 constexpr int kParamCount = static_cast<int>(sizeof kParams / sizeof kParams[0]);
 
@@ -157,7 +157,7 @@ std::vector<uint8_t> SimVehicle::poll() {
     nextGps_ = now + 1000;
     mavlink_message_t m;
     mavlink_msg_gps_raw_int_pack(SYS, COMP, &m, static_cast<uint64_t>(now) * 1000, 3, static_cast<int32_t>(lat_ * 1e7), static_cast<int32_t>(lon_ * 1e7), 259000,
-                                 120, 180, static_cast<uint16_t>(speedMps_ * 100), static_cast<uint16_t>(headingDeg_ * 100), 9, 0, 0, 0, 0, 0, 0);
+                                 120, 180, static_cast<uint16_t>(std::abs(speedMps_) * 100), static_cast<uint16_t>(headingDeg_ * 100), 9, 0, 0, 0, 0, 0, 0);
     emit(m, out);
   }
   if (now >= nextAttitude_) {

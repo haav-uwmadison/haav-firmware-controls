@@ -35,7 +35,7 @@ Leave the terminal open. Copy the generated local token into <https://mission.ha
 
 - Left stick vertical → RC1 / left thruster
 - Right stick vertical → RC3 / right thruster
-- LT minus RT → RC6 / rudder (verify trigger direction in the live UI before enabling output)
+- RT minus LT → RC6 / rudder (verify trigger direction in the live UI before enabling output)
 - A → MANUAL mode and arm; B → stop output, center all RC overrides, and disarm
 
 Every disarm path stops the override loop and centers the rudder first. While the laptop agent remains connected to a healthy Pixhawk and it is disarmed, the agent keeps RC6 at neutral; this is needed because `SERVO3_FUNCTION=RCIN6Scaled` follows RC6 even while disarmed. Stopping the agent lets ArduPilot's RC override timeout hand control back to the receiver.

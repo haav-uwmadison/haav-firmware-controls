@@ -6,11 +6,14 @@
 //   mission_daemon --sim                no hardware: a simulated boat for testing the dashboard
 //   mission_daemon --list-ports         show serial candidates and exit
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <limits>
 #include <string>
 #include <thread>
 
@@ -51,8 +54,15 @@ uint32_t monotonicMs() {
 
 std::string clockString() {
   const std::time_t t = std::time(nullptr);
+  std::tm tm{};
+#ifdef _WIN32
+  localtime_s(&tm, &t);
+#else
+  localtime_r(&t, &tm);
+#endif
+  const int hour12 = tm.tm_hour % 12 == 0 ? 12 : tm.tm_hour % 12;
   char buf[32];
-  std::strftime(buf, sizeof buf, "%-I:%M:%S %p", std::localtime(&t));
+  std::snprintf(buf, sizeof buf, "%d:%02d:%02d %s", hour12, tm.tm_min, tm.tm_sec, tm.tm_hour >= 12 ? "PM" : "AM");
   return buf;
 }
 
@@ -124,6 +134,7 @@ Options parseArgs(int argc, char** argv) {
     if (a == "--port") o.port = next("--port");
     else if (a == "--baud") o.baud = std::atoi(next("--baud").c_str());
     else if (a == "--ws") o.wsPort = std::atoi(next("--ws").c_str());
+    else if (a.rfind("--ws=", 0) == 0) o.wsPort = std::atoi(a.c_str() + 5);
     else if (a == "--sim") o.sim = true;
     else if (a == "--list-ports") o.listPorts = true;
     else if (a == "--no-autoconnect") o.autoConnect = false;
@@ -223,33 +234,74 @@ int main(int argc, char** argv) {
     }
     // 3. commands from the dashboard
     for (const std::string& text : ws.takeInbound()) {
-      json cmd = json::parse(text, nullptr, false);
-      if (!cmd.is_object()) continue;
-      const std::string name = cmd.value("name", "");
-      if (name == "connect") openLink();
-      else if (name == "disconnect") { mission.stopOutput("disconnecting"); closeLink(""); }
-      else if (name == "startOutput") mission.startOutput();
-      else if (name == "stopOutput") mission.stopOutput(cmd.value("reason", "stopped by user"));
-      else if (name == "arm") mission.arm();
-      else if (name == "disarm") mission.disarm();
-      else if (name == "panic") mission.panic();
-      else if (name == "setMotorSpan") mission.setMotorSpan(cmd.value("span", DEFAULT_MOTOR_SPAN));
-      else if (name == "setMotorReverse") mission.setMotorReverse(cmd.value("motor", "left") == "left", cmd.value("reverse", false));
-      else if (name == "setBaud") mission.setBaud(std::atoi(cmd.value("baud", "57600").c_str()));
-      else if (name == "clearTrail") mission.clearTrail();
-      else if (name == "refreshParams") mission.refreshParams();
-      else if (name == "setParam") { if (cmd.contains("param") && cmd["param"].is_string() && cmd.contains("value") && cmd["value"].is_number()) mission.setParam(cmd["param"].get<std::string>(), cmd["value"].get<float>()); }
-      else if (name == "commandLong") {
-        if (cmd.contains("command") && cmd["command"].is_number()) {
-          std::vector<float> params;
-          if (cmd.contains("params") && cmd["params"].is_array()) for (const auto& v : cmd["params"]) params.push_back(v.is_number() ? v.get<float>() : 0.0f);
-          mission.sendCommandLong(static_cast<uint16_t>(cmd["command"].get<int>()), params);
+      try {
+        json cmd = json::parse(text, nullptr, false);
+        if (!cmd.is_object() || !cmd.contains("name") || !cmd["name"].is_string()) continue;
+        const std::string name = cmd["name"].get<std::string>();
+        if (name == "connect") openLink();
+        else if (name == "disconnect") { mission.stopOutput("disconnecting"); closeLink(""); }
+        else if (name == "startOutput") mission.startOutput();
+        else if (name == "stopOutput") {
+          const std::string reason = (cmd.contains("reason") && cmd["reason"].is_string()) ? cmd["reason"].get<std::string>() : "stopped by user";
+          mission.stopOutput(reason);
+        } else if (name == "arm") mission.arm();
+        else if (name == "disarm") mission.disarm();
+        else if (name == "panic") mission.panic();
+        else if (name == "setMotorSpan") {
+          if (cmd.contains("span") && cmd["span"].is_number()) {
+            const double rawSpan = cmd["span"].get<double>();
+            if (std::isfinite(rawSpan)) {
+              const double clamped = std::min<double>(MAX_MOTOR_SPAN, std::max<double>(MIN_MOTOR_SPAN, rawSpan));
+              mission.setMotorSpan(static_cast<int>(std::lround(clamped)));
+            }
+          }
+        } else if (name == "setMotorReverse") {
+          if (cmd.contains("motor") && cmd["motor"].is_string() && cmd.contains("reverse") && cmd["reverse"].is_boolean()) {
+            const std::string motor = cmd["motor"].get<std::string>();
+            if (motor == "left" || motor == "right") {
+              mission.setMotorReverse(motor == "left", cmd["reverse"].get<bool>());
+            }
+          }
+        } else if (name == "setBaud") {
+          int baud = 0;
+          if (cmd.contains("baud") && cmd["baud"].is_string()) baud = std::atoi(cmd["baud"].get<std::string>().c_str());
+          else if (cmd.contains("baud") && cmd["baud"].is_number_integer()) baud = cmd["baud"].get<int>();
+          if (baud > 0) mission.setBaud(baud);
+        } else if (name == "clearTrail") mission.clearTrail();
+        else if (name == "refreshParams") mission.refreshParams();
+        else if (name == "setParam") {
+          if (cmd.contains("param") && cmd["param"].is_string() && cmd.contains("value") && cmd["value"].is_number()) {
+            const double rawVal = cmd["value"].get<double>();
+            if (std::isfinite(rawVal) && std::fabs(rawVal) <= static_cast<double>(std::numeric_limits<float>::max())) {
+              mission.setParam(cmd["param"].get<std::string>(), static_cast<float>(rawVal));
+            }
+          }
+        } else if (name == "commandLong") {
+          if (cmd.contains("command") && cmd["command"].is_number_integer()) {
+            const int64_t rawCmd = cmd["command"].get<int64_t>();
+            if (rawCmd >= 0 && rawCmd <= 65535) {
+              std::vector<float> params;
+              bool validParams = true;
+              if (cmd.contains("params") && cmd["params"].is_array()) {
+                for (const auto& v : cmd["params"]) {
+                  if (!v.is_number()) { params.push_back(0.0f); continue; }
+                  const double d = v.get<double>();
+                  if (!std::isfinite(d) || std::fabs(d) > static_cast<double>(std::numeric_limits<float>::max())) { validParams = false; break; }
+                  params.push_back(static_cast<float>(d));
+                }
+              }
+              if (validParams) mission.sendCommandLong(static_cast<uint16_t>(rawCmd), params);
+            }
+          }
         }
+      } catch (const std::exception&) {
+        // Ignore malformed dashboard command payloads rather than crashing the control daemon.
       }
     }
     // 4. timers and the control loop
     mission.tick();
-    // 5. state to the dashboard
+    // 5. send initial hellos to new clients, then stream state to the dashboard
+    ws.flushHellos();
     if (now >= nextBroadcast) { nextBroadcast = now + STATE_BROADCAST_MS; if (ws.clientCount() > 0) ws.broadcast(stateJson(mission, gamepad.name()).dump()); }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }

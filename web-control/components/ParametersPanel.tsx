@@ -3,7 +3,7 @@
 // Read-only view of the Pixhawk's parameter table, filled by the MAVLink parameter protocol
 // (PARAM_REQUEST_LIST → PARAM_VALUE stream) in whichever backend is active.
 
-import { useDeferredValue, useMemo, useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,7 +33,7 @@ function toParamsFile(params: ParamTable, vehicle: string): string {
   return header + rows.map(p => `1\t1\t${p.name}\t${formatParam(p)}\t${p.type}`).join("\n") + "\n";
 }
 
-export function ParametersPanel({ params, connected, vehicle, onRefresh, className }: Props) {
+export const ParametersPanel = memo(function ParametersPanel({ params, connected, vehicle, onRefresh, className }: Props) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
   const rows = useMemo(() => {
@@ -93,4 +93,4 @@ export function ParametersPanel({ params, connected, vehicle, onRefresh, classNa
       {params.received > 0 && rows.length === 0 && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">No parameter matches “{query}”.</div>}
     </CardContent>
   </Card>;
-}
+});

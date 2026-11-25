@@ -20,6 +20,13 @@ type Props = {
 
 type Sample = { t: number; values: number[] };
 
+function resolveCanvasColor(el: HTMLElement, color: string): string {
+  const match = /^var\(\s*(--[^),\s]+)\s*(?:,\s*([^)]+))?\)$/.exec(color.trim());
+  if (!match) return color;
+  const resolved = getComputedStyle(el).getPropertyValue(match[1]).trim();
+  return resolved || match[2]?.trim() || "#fafafa";
+}
+
 /**
  * Rolling strip chart on a canvas, appending the current `series` values on every render.
  * Custom on purpose (plan decision 9A): four of these redraw at 60 Hz, which an SVG chart library cannot sustain.
@@ -27,6 +34,7 @@ type Sample = { t: number; values: number[] };
 export function Scope({ title, series, range = [-1, 1], seconds = 8, height = 96, overlay, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const history = useRef<Sample[]>([]);
+  const colorCache = useRef(new Map<string, string>());
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -55,7 +63,9 @@ export function Scope({ title, series, range = [-1, 1], seconds = 8, height = 96
     for (const level of [lo, (lo + hi) / 2, hi]) { ctx.beginPath(); ctx.moveTo(0, Math.round(y(level)) + 0.5); ctx.lineTo(width, Math.round(y(level)) + 0.5); ctx.stroke(); }
 
     series.forEach((s, i) => {
-      ctx.strokeStyle = s.color; ctx.lineWidth = 1.5; ctx.beginPath();
+      let stroke = colorCache.current.get(s.color);
+      if (!stroke) { stroke = resolveCanvasColor(canvas, s.color); colorCache.current.set(s.color, stroke); }
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1.5; ctx.beginPath();
       samples.forEach((sample, k) => { const px = x(sample.t), py = y(sample.values[i] ?? 0); if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
       ctx.stroke();
     });
